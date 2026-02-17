@@ -4,7 +4,7 @@ import os
 
 import pulumi
 from dotenv import load_dotenv
-from pulumi_gcp import container, storage
+from pulumi_gcp import container, organizations, projects, storage
 import pulumi_kubernetes as kubernetes
 
 load_dotenv()
@@ -27,6 +27,8 @@ agent_sandbox_version = _required_env("AGENT_SANDBOX_VERSION")
 snapshots_bucket_name_prefix = _required_env("SNAPSHOTS_BUCKET_NAME_PREFIX")
 snapshots_bucket_name = f"{snapshots_bucket_name_prefix}{project_id}"
 snapshot_folder = _required_env("SNAPSHOT_FOLDER")
+snapshot_namespace = _required_env("SNAPSHOT_NAMESPACE")
+snapshot_ksa_name = _required_env("SNAPSHOT_KSA_NAME")
 
 cluster = container.Cluster(
     "standard-cluster",
@@ -86,6 +88,82 @@ snapshots_managed_folder = storage.ManagedFolder(
     name=f"{snapshot_folder.rstrip('/')}/",
 )
 
+pod_snapshot_gcs_read_writer_role = projects.IAMCustomRole(
+    "pod-snapshot-gcs-read-writer-role",
+    project=project_id,
+    role_id="podSnapshotGcsReadWriter",
+    title="podSnapshotGcsReadWriter",
+    permissions=[
+        "storage.objects.get",
+        "storage.objects.create",
+        "storage.objects.delete",
+        "storage.folders.create",
+    ],
+)
+
+snapshot_ns = kubernetes.core.v1.Namespace(
+    "snapshot-namespace",
+    metadata={"name": snapshot_namespace},
+)
+
+snapshot_ksa = kubernetes.core.v1.ServiceAccount(
+    "snapshot-ksa",
+    metadata={
+        "name": snapshot_ksa_name,
+        "namespace": snapshot_ns.metadata["name"],
+    },
+    opts=pulumi.ResourceOptions(depends_on=[snapshot_ns]),
+)
+
+project = organizations.get_project_output(project_id=project_id)
+namespace_principal_set = pulumi.Output.format(
+    "principalSet://iam.googleapis.com/projects/{0}/locations/global/workloadIdentityPools/{1}.svc.id.goog/namespace/{2}",
+    project.number,
+    project_id,
+    snapshot_ns.metadata["name"],
+)
+
+bucket_viewer_for_namespace = storage.BucketIAMMember(
+    "snapshot-namespace-bucket-viewer",
+    bucket=snapshots_bucket.name,
+    member=namespace_principal_set,
+    role="roles/storage.bucketViewer",
+)
+
+snapshot_ksa_principal = pulumi.Output.format(
+    "principal://iam.googleapis.com/projects/{0}/locations/global/workloadIdentityPools/{1}.svc.id.goog/subject/ns/{2}/sa/{3}",
+    project.number,
+    project_id,
+    snapshot_ns.metadata["name"],
+    snapshot_ksa.metadata["name"],
+)
+
+bucket_writer_for_snapshot_ksa = storage.BucketIAMMember(
+    "snapshot-ksa-folder-writer",
+    bucket=snapshots_bucket.name,
+    member=snapshot_ksa_principal,
+    role=pod_snapshot_gcs_read_writer_role.name,
+)
+
+bucket_object_user_for_snapshot_ksa = storage.BucketIAMMember(
+    "snapshot-ksa-object-user",
+    bucket=snapshots_bucket.name,
+    member=snapshot_ksa_principal,
+    role="roles/storage.objectUser",
+)
+
+gke_snapshot_controller_service_agent = pulumi.Output.format(
+    "serviceAccount:service-{0}@container-engine-robot.iam.gserviceaccount.com",
+    project.number,
+)
+
+bucket_object_user_for_gke_snapshot_controller = storage.BucketIAMMember(
+    "gke-snapshot-controller-object-user",
+    bucket=snapshots_bucket.name,
+    member=gke_snapshot_controller_service_agent,
+    role="roles/storage.objectUser",
+)
+
 # These resources use the default Pulumi Kubernetes provider, which reads kubeconfig
 # from ~/.kube/config. Run gcloud get-credentials before pulumi up.
 agent_sandbox_manifest = kubernetes.yaml.ConfigFile(
@@ -109,3 +187,7 @@ pulumi.export("node_pool_name", node_pool.name)
 pulumi.export("agent_sandbox_version", agent_sandbox_version)
 pulumi.export("snapshots_bucket_name", snapshots_bucket.name)
 pulumi.export("snapshot_folder", snapshots_managed_folder.name)
+pulumi.export("pod_snapshot_gcs_read_writer_role", pod_snapshot_gcs_read_writer_role.name)
+pulumi.export("snapshot_namespace", snapshot_ns.metadata["name"])
+pulumi.export("snapshot_ksa_name", snapshot_ksa.metadata["name"])
+pulumi.export("project_number", project.number)
