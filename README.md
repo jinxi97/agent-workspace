@@ -1,77 +1,85 @@
-# Pulumi GCP Python Storage Bucket Template
+# Agent Sandbox on GKE with Pulumi
 
- A minimal Pulumi template for provisioning a Google Cloud Storage bucket using Python.
+This project provisions a Standard GKE cluster for Agent Sandbox and deploys the Agent Sandbox controller manifests.
 
- This template helps you get started with Pulumi and the `pulumi-gcp` provider to create a simple storage bucket and export its URL.
+## What this stack creates
 
- ## When to Use
+- A Standard GKE cluster (`pulumi_gcp.container.Cluster`)
+- A dedicated node pool with gVisor enabled (`pulumi_gcp.container.NodePool`)
+- Agent Sandbox controller manifests from GitHub release URLs (`pulumi_kubernetes.yaml.ConfigFile`)
+  - `manifest.yaml`
+  - `extensions.yaml`
 
- - You need a quick example of using Pulumi with Google Cloud in Python.
- - You want to manage a Google Cloud Storage bucket as code.
- - You’re looking for a minimal scaffold to build more complex GCP infrastructure.
+## Prerequisites
 
- ## Prerequisites
+- Pulumi CLI installed and logged in
+- `gcloud` CLI installed and authenticated
+- Python 3.13+
+- `uv` installed
 
- - A Google Cloud account and a target GCP project.
- - Authentication set up via `gcloud auth login` or the `GOOGLE_APPLICATION_CREDENTIALS` environment variable.
- - Python 3.7 or later installed on your machine.
- - Pulumi CLI installed and logged in to your Pulumi account.
+## Configuration
 
- ## Usage
+Set `gcp:project` in Pulumi stack config (already present in `Pulumi.dev.yaml`), and use `.env` for runtime variables.
 
- Run the following command to scaffold a new project from this template:
+1. Create `.env`:
 
- ```bash
- pulumi new gcp-python
- ```
+```bash
+cp .env.example .env
+```
 
- Follow the interactive prompts:
- - **Project Name**: Your project name.
- - **Project Description**: A short description of your project.
- - **gcp:project**: The ID of the Google Cloud project where resources will be created.
+2. Ensure `.env` contains at least:
 
- After the project is generated, navigate into your project directory and deploy:
+```bash
+CLUSTER_NAME="agent-workspace-cluster"
+GKE_LOCATION="us-central1"
+GKE_VERSION="1.35.0-gke.1795000"
+MACHINE_TYPE="n2-standard-2"
+NODE_POOL_NAME="agent-sandbox-node-pool"
+AGENT_SANDBOX_VERSION="v0.1.0"
+```
 
- ```bash
- cd <project-name>
- pulumi up
- ```
+Notes:
+- `__main__.py` calls `load_dotenv()`, so Pulumi reads `.env` when evaluating the Python program.
+- `PROJECT_ID` can be set in `.env`, but this program currently uses `gcp:project` from Pulumi config for the workload pool.
 
- Confirm the changes to provision your storage bucket.
+## Deploy
 
- ## Project Layout
+1. Load `.env` into shell:
 
- ```
- .
- ├── __main__.py        # Pulumi program defining resources
- ├── Pulumi.yaml        # Project configuration and template metadata
- └── requirements.txt   # Python dependencies for Pulumi and GCP
- ```
+```bash
+set -a; source .env; set +a
+```
 
- ## Configuration
+2. Retrieve cluster credentials (required because Kubernetes manifests are applied via the default kubeconfig-based provider):
 
- - **gcp:project**: (Required) The Google Cloud project ID where resources will be created.
+```bash
+gcloud container clusters get-credentials "${CLUSTER_NAME}" --location="${GKE_LOCATION}"
+```
 
- ## Resources Created
+3. Deploy:
 
- - **Storage Bucket** (`pulumi_gcp.storage.Bucket`): A bucket named `my-bucket` in the `US` location.
+```bash
+pulumi up
+```
 
- ## Outputs
+## Destroy
 
- - **bucket_name**: The URL of the created storage bucket.
+To remove managed resources:
 
- ## Next Steps
+```bash
+pulumi destroy
+```
 
- - Modify `__main__.py` to customize the bucket:
-   - Change the bucket name.
-   - Adjust the `location` or add bucket labels and IAM policies.
- - Add more GCP resources such as Pub/Sub topics, Compute instances, or BigQuery datasets.
- - Integrate with CI/CD pipelines using `pulumi preview` and `pulumi up --yes`.
- - Explore the [Pulumi GCP Provider Documentation](https://www.pulumi.com/registry/packages/gcp/) for more examples.
+If desired, remove stack metadata too:
 
- ## Need Help?
+```bash
+pulumi stack rm dev
+```
 
- - Pulumi Docs: https://www.pulumi.com/docs/
- - GCP Provider Docs: https://www.pulumi.com/registry/packages/gcp/
- - Community Slack: https://slack.pulumi.com/
- - GitHub Issues: https://github.com/pulumi/pulumi/issues
+## Outputs
+
+- `project_id`
+- `region`
+- `cluster_name`
+- `node_pool_name`
+- `agent_sandbox_version`

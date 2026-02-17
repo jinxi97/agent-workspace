@@ -5,6 +5,7 @@ import os
 import pulumi
 from dotenv import load_dotenv
 from pulumi_gcp import container
+import pulumi_kubernetes as kubernetes
 
 load_dotenv()
 
@@ -21,7 +22,8 @@ region = _required_env("GKE_LOCATION")
 gke_version = _required_env("GKE_VERSION")
 cluster_name = _required_env("CLUSTER_NAME")
 machine_type = _required_env("MACHINE_TYPE")
-gke_version = os.getenv("GKE_VERSION")
+node_pool_name = _required_env("NODE_POOL_NAME")
+agent_sandbox_version = _required_env("AGENT_SANDBOX_VERSION")
 
 cluster = container.Cluster(
     "standard-cluster",
@@ -46,6 +48,40 @@ cluster = container.Cluster(
     ),
 )
 
+node_pool = container.NodePool(
+    "agent-workspace-node-pool",
+    name=node_pool_name,
+    cluster=cluster.name,
+    location=region,
+    node_count=1,
+    version=gke_version,
+    node_config=container.NodePoolNodeConfigArgs(
+        machine_type=machine_type,
+        image_type="COS_CONTAINERD",
+        sandbox_config=container.NodePoolNodeConfigSandboxConfigArgs(
+            sandbox_type="gvisor",
+        ),
+    ),
+)
+
+# These resources use the default Pulumi Kubernetes provider, which reads kubeconfig
+# from ~/.kube/config. Run gcloud get-credentials before pulumi up.
+agent_sandbox_manifest = kubernetes.yaml.ConfigFile(
+    "agent-sandbox-manifest",
+    file=f"https://github.com/kubernetes-sigs/agent-sandbox/releases/download/{agent_sandbox_version}/manifest.yaml",
+    resource_prefix="agent-sandbox-manifest",
+    opts=pulumi.ResourceOptions(depends_on=[node_pool]),
+)
+
+agent_sandbox_extensions = kubernetes.yaml.ConfigFile(
+    "agent-sandbox-extensions",
+    file=f"https://github.com/kubernetes-sigs/agent-sandbox/releases/download/{agent_sandbox_version}/extensions.yaml",
+    resource_prefix="agent-sandbox-extensions",
+    opts=pulumi.ResourceOptions(depends_on=[agent_sandbox_manifest]),
+)
+
 pulumi.export("project_id", project_id)
 pulumi.export("region", region)
 pulumi.export("cluster_name", cluster.name)
+pulumi.export("node_pool_name", node_pool.name)
+pulumi.export("agent_sandbox_version", agent_sandbox_version)
