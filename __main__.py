@@ -16,6 +16,16 @@ def _required_env(name: str) -> str:
     return value
 
 
+def _int_env(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer, got: {value}") from exc
+
+
 gcp_config = pulumi.Config("gcp")
 project_id = gcp_config.require("project")
 region = _required_env("GKE_LOCATION")
@@ -30,6 +40,7 @@ snapshot_folder = _required_env("SNAPSHOT_FOLDER")
 snapshot_namespace = _required_env("SNAPSHOT_NAMESPACE")
 snapshot_ksa_name = _required_env("SNAPSHOT_KSA_NAME")
 sandbox_template_revision = _required_env("SANDBOX_TEMPLATE_REVISION")
+sandbox_warm_pool_replicas = _int_env("SANDBOX_WARM_POOL_REPLICAS", 2)
 
 cluster = container.Cluster(
     "standard-cluster",
@@ -291,6 +302,23 @@ sandbox_template = kubernetes.apiextensions.CustomResource(
     ),
 )
 
+sandbox_warm_pool = kubernetes.apiextensions.CustomResource(
+    "python-sandbox-warmpool",
+    api_version="extensions.agents.x-k8s.io/v1alpha1",
+    kind="SandboxWarmPool",
+    metadata={
+        "name": "python-sandbox-warmpool",
+        "namespace": snapshot_ns.metadata["name"],
+    },
+    spec={
+        "replicas": sandbox_warm_pool_replicas,
+        "sandboxTemplateRef": {
+            "name": "python-runtime-template",
+        },
+    },
+    opts=pulumi.ResourceOptions(depends_on=[sandbox_template]),
+)
+
 pulumi.export("project_id", project_id)
 pulumi.export("region", region)
 pulumi.export("cluster_name", cluster.name)
@@ -306,3 +334,5 @@ pulumi.export("pod_snapshot_storage_config", pod_snapshot_storage_config.metadat
 pulumi.export("pod_snapshot_policy", pod_snapshot_policy.metadata["name"])
 pulumi.export("sandbox_template", sandbox_template.metadata["name"])
 pulumi.export("sandbox_template_revision", sandbox_template_revision)
+pulumi.export("sandbox_warm_pool", sandbox_warm_pool.metadata["name"])
+pulumi.export("sandbox_warm_pool_replicas", sandbox_warm_pool_replicas)
