@@ -29,6 +29,7 @@ snapshots_bucket_name = f"{snapshots_bucket_name_prefix}{project_id}"
 snapshot_folder = _required_env("SNAPSHOT_FOLDER")
 snapshot_namespace = _required_env("SNAPSHOT_NAMESPACE")
 snapshot_ksa_name = _required_env("SNAPSHOT_KSA_NAME")
+sandbox_template_revision = _required_env("SANDBOX_TEMPLATE_REVISION")
 
 cluster = container.Cluster(
     "standard-cluster",
@@ -180,6 +181,116 @@ agent_sandbox_extensions = kubernetes.yaml.ConfigFile(
     opts=pulumi.ResourceOptions(depends_on=[agent_sandbox_manifest]),
 )
 
+pod_snapshot_storage_config = kubernetes.apiextensions.CustomResource(
+    "cpu-pssc-gcs",
+    api_version="podsnapshot.gke.io/v1alpha1",
+    kind="PodSnapshotStorageConfig",
+    metadata={"name": "cpu-pssc-gcs"},
+    spec={
+        "snapshotStorageConfig": {
+            "gcs": {
+                "bucket": snapshots_bucket.name,
+                "path": snapshot_folder,
+            },
+        },
+    },
+    opts=pulumi.ResourceOptions(
+        depends_on=[
+            agent_sandbox_extensions,
+            snapshots_managed_folder,
+            bucket_viewer_for_namespace,
+            bucket_writer_for_snapshot_ksa,
+            bucket_object_user_for_snapshot_ksa,
+            bucket_object_user_for_gke_snapshot_controller,
+        ]
+    ),
+)
+
+pod_snapshot_policy = kubernetes.apiextensions.CustomResource(
+    "cpu-psp",
+    api_version="podsnapshot.gke.io/v1alpha1",
+    kind="PodSnapshotPolicy",
+    metadata={
+        "name": "cpu-psp",
+        "namespace": snapshot_ns.metadata["name"],
+    },
+    spec={
+        "storageConfigName": "cpu-pssc-gcs",
+        "selector": {
+            "matchLabels": {
+                "app": "agent-sandbox-workload",
+            },
+        },
+        "triggerConfig": {
+            "type": "manual",
+            "postCheckpoint": "resume",
+        },
+    },
+    opts=pulumi.ResourceOptions(depends_on=[pod_snapshot_storage_config]),
+)
+
+sandbox_template = kubernetes.apiextensions.CustomResource(
+    "python-runtime-template",
+    api_version="extensions.agents.x-k8s.io/v1alpha1",
+    kind="SandboxTemplate",
+    metadata={
+        "name": "python-runtime-template",
+        "namespace": snapshot_ns.metadata["name"],
+        "annotations": {
+            "funky.dev/template-revision": sandbox_template_revision,
+        },
+    },
+    spec={
+        "podTemplate": {
+            "metadata": {
+                "labels": {
+                    "app": "agent-sandbox-workload",
+                },
+            },
+            "spec": {
+                "serviceAccountName": snapshot_ksa.metadata["name"],
+                "runtimeClassName": "gvisor",
+                "containers": [
+                    {
+                        "name": "my-container",
+                        "image": "python:3.13-slim",
+                        "command": ["python3", "-c"],
+                        "args": [
+                            (
+                                "import time\n"
+                                "i = 0\n"
+                                "while True:\n"
+                                "    print(f\"Count: {i}\", flush=True)\n"
+                                "    i += 1\n"
+                                "    time.sleep(1)\n"
+                            )
+                        ],
+                        "resources": {
+                            "requests": {
+                                "cpu": "250m",
+                                "memory": "512Mi",
+                                "ephemeral-storage": "1Gi",
+                            },
+                            "limits": {
+                                "cpu": "1",
+                                "memory": "2Gi",
+                                "ephemeral-storage": "4Gi",
+                            },
+                        },
+                    }
+                ],
+            },
+        },
+    },
+    opts=pulumi.ResourceOptions(
+        depends_on=[
+            agent_sandbox_extensions,
+            snapshot_ksa,
+            pod_snapshot_policy,
+        ]
+    ),
+)
+
 pulumi.export("project_id", project_id)
 pulumi.export("region", region)
 pulumi.export("cluster_name", cluster.name)
@@ -191,3 +302,7 @@ pulumi.export("pod_snapshot_gcs_read_writer_role", pod_snapshot_gcs_read_writer_
 pulumi.export("snapshot_namespace", snapshot_ns.metadata["name"])
 pulumi.export("snapshot_ksa_name", snapshot_ksa.metadata["name"])
 pulumi.export("project_number", project.number)
+pulumi.export("pod_snapshot_storage_config", pod_snapshot_storage_config.metadata["name"])
+pulumi.export("pod_snapshot_policy", pod_snapshot_policy.metadata["name"])
+pulumi.export("sandbox_template", sandbox_template.metadata["name"])
+pulumi.export("sandbox_template_revision", sandbox_template_revision)
