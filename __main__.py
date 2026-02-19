@@ -4,7 +4,7 @@ import os
 
 import pulumi
 from dotenv import load_dotenv
-from pulumi_gcp import container, organizations, projects, storage
+from pulumi_gcp import cloudbuild, container, organizations, projects, serviceaccount, storage
 import pulumi_kubernetes as kubernetes
 
 load_dotenv()
@@ -41,6 +41,13 @@ snapshot_namespace = _required_env("SNAPSHOT_NAMESPACE")
 snapshot_ksa_name = _required_env("SNAPSHOT_KSA_NAME")
 sandbox_template_revision = _required_env("SANDBOX_TEMPLATE_REVISION")
 sandbox_warm_pool_replicas = _int_env("SANDBOX_WARM_POOL_REPLICAS", 2)
+fastapi_app_name = _required_env("FASTAPI_APP_NAME")
+fastapi_container_port = _int_env("FASTAPI_CONTAINER_PORT", 8080)
+fastapi_service_port = _int_env("FASTAPI_SERVICE_PORT", 80)
+cloudbuild_file = _required_env("CLOUDBUILD_FILE")
+cloudbuild_branch_name = _required_env("CLOUDBUILD_BRANCH_NAME")
+cloudbuild_location = _required_env("CLOUDBUILD_LOCATION")
+cloudbuild_repository = _required_env("CLOUDBUILD_REPOSITORY")
 
 cluster = container.Cluster(
     "standard-cluster",
@@ -319,6 +326,91 @@ sandbox_warm_pool = kubernetes.apiextensions.CustomResource(
     opts=pulumi.ResourceOptions(depends_on=[sandbox_template]),
 )
 
+cloud_build_sa = serviceaccount.Account(
+    "agent-workspace-cloudbuild-sa",
+    account_id="agentworkspacebuild",
+    display_name="Agent Workspace Cloud Build",
+    project=project_id,
+)
+cloud_build_member = cloud_build_sa.email.apply(
+    lambda email: f"serviceAccount:{email}"
+)
+cloud_build_service_account = (
+    cloud_build_sa.email.apply(
+        lambda email: f"projects/{project_id}/serviceAccounts/{email}"
+    )
+)
+cloud_build_service_agent_member = project.number.apply(
+    lambda num: f"serviceAccount:service-{num}@gcp-sa-cloudbuild.iam.gserviceaccount.com"
+)
+
+cloudbuild_gke_developer = projects.IAMMember(
+    "cloudbuild-gke-developer",
+    project=project_id,
+    role="roles/container.developer",
+    member=cloud_build_member,
+)
+
+cloudbuild_gke_viewer = projects.IAMMember(
+    "cloudbuild-gke-viewer",
+    project=project_id,
+    role="roles/container.clusterViewer",
+    member=cloud_build_member,
+)
+
+cloudbuild_storage_admin = projects.IAMMember(
+    "cloudbuild-storage-admin",
+    project=project_id,
+    role="roles/storage.admin",
+    member=cloud_build_member,
+)
+
+cloudbuild_logging_writer = projects.IAMMember(
+    "cloudbuild-logging-writer",
+    project=project_id,
+    role="roles/logging.logWriter",
+    member=cloud_build_member,
+)
+
+cloudbuild_sa_user = serviceaccount.IAMMember(
+    "cloudbuild-sa-user",
+    service_account_id=cloud_build_sa.name,
+    role="roles/iam.serviceAccountUser",
+    member=cloud_build_service_agent_member,
+)
+
+cloudbuild_sa_token_creator = serviceaccount.IAMMember(
+    "cloudbuild-sa-token-creator",
+    service_account_id=cloud_build_sa.name,
+    role="roles/iam.serviceAccountTokenCreator",
+    member=cloud_build_service_agent_member,
+)
+
+fastapi_cloudbuild_trigger = cloudbuild.Trigger(
+    "fastapi-cloudbuild-trigger",
+    name=f"{fastapi_app_name}-main-trigger",
+    description=f"Build and deploy {fastapi_app_name} on push to main",
+    location=cloudbuild_location,
+    filename=cloudbuild_file,
+    repository_event_config=cloudbuild.TriggerRepositoryEventConfigArgs(
+        repository=cloudbuild_repository,
+        push=cloudbuild.TriggerRepositoryEventConfigPushArgs(
+            branch=cloudbuild_branch_name,
+        ),
+    ),
+    service_account=cloud_build_service_account,
+    opts=pulumi.ResourceOptions(
+        depends_on=[
+            cloudbuild_gke_developer,
+            cloudbuild_gke_viewer,
+            cloudbuild_storage_admin,
+            cloudbuild_logging_writer,
+            cloudbuild_sa_user,
+            cloudbuild_sa_token_creator,
+        ],
+    ),
+)
+
 pulumi.export("project_id", project_id)
 pulumi.export("region", region)
 pulumi.export("cluster_name", cluster.name)
@@ -336,3 +428,4 @@ pulumi.export("sandbox_template", sandbox_template.metadata["name"])
 pulumi.export("sandbox_template_revision", sandbox_template_revision)
 pulumi.export("sandbox_warm_pool", sandbox_warm_pool.metadata["name"])
 pulumi.export("sandbox_warm_pool_replicas", sandbox_warm_pool_replicas)
+pulumi.export("fastapi_cloudbuild_trigger_id", fastapi_cloudbuild_trigger.trigger_id)
