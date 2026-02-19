@@ -326,6 +326,41 @@ sandbox_warm_pool = kubernetes.apiextensions.CustomResource(
     opts=pulumi.ResourceOptions(depends_on=[sandbox_template]),
 )
 
+fastapi_labels = {"app": fastapi_app_name}
+
+fastapi_deployment = kubernetes.apps.v1.Deployment(
+    "fastapi-deployment",
+    metadata={"name": fastapi_app_name, "labels": fastapi_labels},
+    spec={
+        "replicas": 1,
+        "selector": {"matchLabels": fastapi_labels},
+        "template": {
+            "metadata": {"labels": fastapi_labels},
+            "spec": {
+                "containers": [
+                    {
+                        "name": fastapi_app_name,
+                        "image": f"gcr.io/{project_id}/{fastapi_app_name}:latest",
+                        "ports": [{"containerPort": fastapi_container_port}],
+                    }
+                ]
+            },
+        },
+    },
+    opts=pulumi.ResourceOptions(depends_on=[node_pool]),
+)
+
+fastapi_service = kubernetes.core.v1.Service(
+    "fastapi-service",
+    metadata={"name": fastapi_app_name, "labels": fastapi_labels},
+    spec={
+        "type": "LoadBalancer",
+        "selector": fastapi_labels,
+        "ports": [{"port": fastapi_service_port, "targetPort": fastapi_container_port}],
+    },
+    opts=pulumi.ResourceOptions(depends_on=[fastapi_deployment]),
+)
+
 cloud_build_sa = serviceaccount.Account(
     "agent-workspace-cloudbuild-sa",
     account_id="agentworkspacebuild",
@@ -362,6 +397,13 @@ cloudbuild_storage_admin = projects.IAMMember(
     "cloudbuild-storage-admin",
     project=project_id,
     role="roles/storage.admin",
+    member=cloud_build_member,
+)
+
+cloudbuild_artifact_registry_writer = projects.IAMMember(
+    "cloudbuild-artifact-registry-writer",
+    project=project_id,
+    role="roles/artifactregistry.writer",
     member=cloud_build_member,
 )
 
@@ -404,11 +446,22 @@ fastapi_cloudbuild_trigger = cloudbuild.Trigger(
             cloudbuild_gke_developer,
             cloudbuild_gke_viewer,
             cloudbuild_storage_admin,
+            cloudbuild_artifact_registry_writer,
             cloudbuild_logging_writer,
             cloudbuild_sa_user,
             cloudbuild_sa_token_creator,
         ],
     ),
+)
+
+fastapi_external_ip = fastapi_service.status.apply(
+    lambda status: (
+        status.get("loadBalancer", {})
+        .get("ingress", [{}])[0]
+        .get("ip")
+        if isinstance(status, dict)
+        else None
+    )
 )
 
 pulumi.export("project_id", project_id)
@@ -428,4 +481,7 @@ pulumi.export("sandbox_template", sandbox_template.metadata["name"])
 pulumi.export("sandbox_template_revision", sandbox_template_revision)
 pulumi.export("sandbox_warm_pool", sandbox_warm_pool.metadata["name"])
 pulumi.export("sandbox_warm_pool_replicas", sandbox_warm_pool_replicas)
+pulumi.export("fastapi_deployment", fastapi_deployment.metadata["name"])
+pulumi.export("fastapi_service", fastapi_service.metadata["name"])
+pulumi.export("fastapi_external_ip", fastapi_external_ip)
 pulumi.export("fastapi_cloudbuild_trigger_id", fastapi_cloudbuild_trigger.trigger_id)
