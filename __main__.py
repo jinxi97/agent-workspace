@@ -1,6 +1,7 @@
 """Pulumi program for a Standard GKE cluster with Pod Snapshot enabled."""
 
 import os
+from typing import Any
 
 import pulumi
 from dotenv import load_dotenv
@@ -270,33 +271,29 @@ sandbox_template = kubernetes.apiextensions.CustomResource(
                 "runtimeClassName": "gvisor",
                 "containers": [
                     {
-                        "name": "my-container",
-                        "image": "python:3.13-slim",
-                        "command": ["python3", "-c"],
-                        "args": [
-                            (
-                                "import time\n"
-                                "i = 0\n"
-                                "while True:\n"
-                                "    print(f\"Count: {i}\", flush=True)\n"
-                                "    i += 1\n"
-                                "    time.sleep(1)\n"
-                            )
-                        ],
+                        "name": "python-runtime",
+                        "image": "registry.k8s.io/agent-sandbox/python-runtime-sandbox:v0.1.0",
+                        "ports": [{"containerPort": 8888}],
+                        "readinessProbe": {
+                            "httpGet": {"path": "/", "port": 8888},
+                            "initialDelaySeconds": 0,
+                            "periodSeconds": 1,
+                        },
                         "resources": {
                             "requests": {
                                 "cpu": "250m",
                                 "memory": "512Mi",
-                                "ephemeral-storage": "1Gi",
+                                "ephemeral-storage": "512Mi",
                             },
                             "limits": {
                                 "cpu": "1",
-                                "memory": "2Gi",
-                                "ephemeral-storage": "4Gi",
+                                "memory": "1Gi",
+                                "ephemeral-storage": "1Gi",
                             },
                         },
                     }
                 ],
+                "restartPolicy": "OnFailure",
             },
         },
     },
@@ -328,6 +325,56 @@ sandbox_warm_pool = kubernetes.apiextensions.CustomResource(
 
 fastapi_labels = {"app": fastapi_app_name}
 
+fastapi_ksa = kubernetes.core.v1.ServiceAccount(
+    "fastapi-ksa",
+    metadata={
+        "name": f"{fastapi_app_name}-sa",
+        "namespace": "default",
+    },
+)
+
+fastapi_sandboxclaims_role = kubernetes.rbac.v1.Role(
+    "fastapi-sandboxclaims-role",
+    metadata={
+        "name": f"{fastapi_app_name}-sandboxclaims-role",
+        "namespace": snapshot_ns.metadata["name"],
+    },
+    rules=[
+        {
+            "apiGroups": ["extensions.agents.x-k8s.io"],
+            "resources": ["sandboxclaims"],
+            "verbs": ["create", "get", "list", "watch", "update", "patch", "delete"],
+        },
+        {
+            "apiGroups": ["agents.x-k8s.io"],
+            "resources": ["sandboxclaims", "sandboxes", "sandboxtemplates"],
+            "verbs": ["create", "get", "list", "watch", "update", "patch", "delete"],
+        },
+    ],
+    opts=pulumi.ResourceOptions(depends_on=[snapshot_ns]),
+)
+
+fastapi_sandboxclaims_rolebinding = kubernetes.rbac.v1.RoleBinding(
+    "fastapi-sandboxclaims-rolebinding",
+    metadata={
+        "name": f"{fastapi_app_name}-sandboxclaims-rb",
+        "namespace": snapshot_ns.metadata["name"],
+    },
+    role_ref={
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": fastapi_sandboxclaims_role.metadata["name"],
+    },
+    subjects=[
+        {
+            "kind": "ServiceAccount",
+            "name": fastapi_ksa.metadata["name"],
+            "namespace": "default",
+        }
+    ],
+    opts=pulumi.ResourceOptions(depends_on=[fastapi_ksa, fastapi_sandboxclaims_role]),
+)
+
 fastapi_deployment = kubernetes.apps.v1.Deployment(
     "fastapi-deployment",
     metadata={"name": fastapi_app_name, "labels": fastapi_labels},
@@ -337,6 +384,7 @@ fastapi_deployment = kubernetes.apps.v1.Deployment(
         "template": {
             "metadata": {"labels": fastapi_labels},
             "spec": {
+                "serviceAccountName": fastapi_ksa.metadata["name"],
                 "containers": [
                     {
                         "name": fastapi_app_name,
@@ -347,7 +395,9 @@ fastapi_deployment = kubernetes.apps.v1.Deployment(
             },
         },
     },
-    opts=pulumi.ResourceOptions(depends_on=[node_pool]),
+    opts=pulumi.ResourceOptions(
+        depends_on=[node_pool, fastapi_sandboxclaims_rolebinding],
+    ),
 )
 
 fastapi_service = kubernetes.core.v1.Service(
@@ -359,6 +409,116 @@ fastapi_service = kubernetes.core.v1.Service(
         "ports": [{"port": fastapi_service_port, "targetPort": fastapi_container_port}],
     },
     opts=pulumi.ResourceOptions(depends_on=[fastapi_deployment]),
+)
+
+sandbox_router_labels = {"app": "sandbox-router"}
+
+sandbox_router_ksa = kubernetes.core.v1.ServiceAccount(
+    "sandbox-router-ksa",
+    metadata={"name": "sandbox-router-sa", "namespace": "default"},
+)
+
+sandbox_router_role = kubernetes.rbac.v1.Role(
+    "sandbox-router-role",
+    metadata={
+        "name": "sandbox-router-role",
+        "namespace": snapshot_ns.metadata["name"],
+    },
+    rules=[
+        {
+            "apiGroups": ["extensions.agents.x-k8s.io", "agents.x-k8s.io"],
+            "resources": ["sandboxclaims", "sandboxtemplates", "sandboxes"],
+            "verbs": ["get", "list", "watch", "create", "update", "patch", "delete"],
+        }
+    ],
+    opts=pulumi.ResourceOptions(depends_on=[snapshot_ns]),
+)
+
+sandbox_router_rolebinding = kubernetes.rbac.v1.RoleBinding(
+    "sandbox-router-rolebinding",
+    metadata={
+        "name": "sandbox-router-binding",
+        "namespace": snapshot_ns.metadata["name"],
+    },
+    role_ref={
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": sandbox_router_role.metadata["name"],
+    },
+    subjects=[
+        {
+            "kind": "ServiceAccount",
+            "name": sandbox_router_ksa.metadata["name"],
+            "namespace": "default",
+        }
+    ],
+    opts=pulumi.ResourceOptions(depends_on=[sandbox_router_ksa, sandbox_router_role]),
+)
+
+sandbox_router_service = kubernetes.core.v1.Service(
+    "sandbox-router-service",
+    metadata={"name": "sandbox-router-svc", "namespace": "default"},
+    spec={
+        "type": "ClusterIP",
+        "selector": sandbox_router_labels,
+        "ports": [
+            {
+                "name": "http",
+                "protocol": "TCP",
+                "port": 8080,
+                "targetPort": 8080,
+            }
+        ],
+    },
+    opts=pulumi.ResourceOptions(depends_on=[node_pool]),
+)
+
+sandbox_router_deployment = kubernetes.apps.v1.Deployment(
+    "sandbox-router-deployment",
+    metadata={"name": "sandbox-router-deployment", "namespace": "default"},
+    spec={
+        "replicas": 2,
+        "selector": {"matchLabels": sandbox_router_labels},
+        "template": {
+            "metadata": {"labels": sandbox_router_labels},
+            "spec": {
+                "serviceAccountName": sandbox_router_ksa.metadata["name"],
+                "topologySpreadConstraints": [
+                    {
+                        "maxSkew": 1,
+                        "topologyKey": "topology.kubernetes.io/zone",
+                        "whenUnsatisfiable": "ScheduleAnyway",
+                        "labelSelector": {"matchLabels": sandbox_router_labels},
+                    }
+                ],
+                "securityContext": {"runAsUser": 1000, "runAsGroup": 1000},
+                "containers": [
+                    {
+                        "name": "router",
+                        "image": "us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/sandbox-router:v20251124-v0.1.0-10-ge26ddb2",
+                        "ports": [{"containerPort": 8080}],
+                        "readinessProbe": {
+                            "httpGet": {"path": "/healthz", "port": 8080},
+                            "initialDelaySeconds": 5,
+                            "periodSeconds": 5,
+                        },
+                        "livenessProbe": {
+                            "httpGet": {"path": "/healthz", "port": 8080},
+                            "initialDelaySeconds": 10,
+                            "periodSeconds": 10,
+                        },
+                        "resources": {
+                            "requests": {"cpu": "250m", "memory": "512Mi"},
+                            "limits": {"cpu": "1000m", "memory": "1Gi"},
+                        },
+                    }
+                ],
+            },
+        },
+    },
+    opts=pulumi.ResourceOptions(
+        depends_on=[sandbox_router_service, sandbox_router_rolebinding]
+    ),
 )
 
 cloud_build_sa = serviceaccount.Account(
@@ -454,15 +614,28 @@ fastapi_cloudbuild_trigger = cloudbuild.Trigger(
     ),
 )
 
-fastapi_external_ip = fastapi_service.status.apply(
-    lambda status: (
-        status.get("loadBalancer", {})
-        .get("ingress", [{}])[0]
-        .get("ip")
-        if isinstance(status, dict)
-        else None
-    )
-)
+def _service_external_ip(status: Any) -> str | None:
+    if status is None:
+        return None
+
+    if isinstance(status, dict):
+        ingress = status.get("load_balancer", {}).get("ingress", [])
+        if ingress:
+            first = ingress[0]
+            if isinstance(first, dict):
+                return first.get("ip")
+        return None
+
+    load_balancer = getattr(status, "load_balancer", None)
+    if not load_balancer:
+        return None
+    ingress = getattr(load_balancer, "ingress", None) or []
+    if not ingress:
+        return None
+    return getattr(ingress[0], "ip", None)
+
+
+fastapi_external_ip = fastapi_service.status.apply(_service_external_ip)
 
 pulumi.export("project_id", project_id)
 pulumi.export("region", region)
@@ -484,4 +657,7 @@ pulumi.export("sandbox_warm_pool_replicas", sandbox_warm_pool_replicas)
 pulumi.export("fastapi_deployment", fastapi_deployment.metadata["name"])
 pulumi.export("fastapi_service", fastapi_service.metadata["name"])
 pulumi.export("fastapi_external_ip", fastapi_external_ip)
+pulumi.export("sandbox_router_deployment", sandbox_router_deployment.metadata["name"])
+pulumi.export("sandbox_router_service", sandbox_router_service.metadata["name"])
+pulumi.export("sandbox_router_service_account", sandbox_router_ksa.metadata["name"])
 pulumi.export("fastapi_cloudbuild_trigger_id", fastapi_cloudbuild_trigger.trigger_id)
