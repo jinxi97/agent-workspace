@@ -273,6 +273,16 @@ sandbox_template = kubernetes.apiextensions.CustomResource(
                     {
                         "name": "python-runtime",
                         "image": "us-central1-docker.pkg.dev/funky-485504/agent-sandbox/python-runtime-sandbox-custom:v3",
+                        "command": ["/usr/local/bin/uvicorn"],
+                        "args": [
+                            "main:app",
+                            "--host",
+                            "0.0.0.0",
+                            "--port",
+                            "8888",
+                            "--log-level",
+                            "trace",
+                        ],
                         "ports": [{"containerPort": 8888}],
                         "readinessProbe": {
                             "httpGet": {"path": "/", "port": 8888},

@@ -79,6 +79,7 @@ async def execute_command(request: ExecuteRequest):
             capture_output=True,
             text=True,
             cwd=WORKSPACE_DIR,
+            shell=True,
         )
         return ExecuteResponse(
             stdout=process.stdout,
