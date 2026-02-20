@@ -22,6 +22,8 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
+WORKSPACE_DIR = os.path.realpath(os.getenv("WORKSPACE_DIR", "/tmp/workspace"))
+
 class ExecuteRequest(BaseModel):
     """Request model for the /execute endpoint."""
     command: str
@@ -33,14 +35,14 @@ class ExecuteResponse(BaseModel):
     exit_code: int
 
 def get_safe_path(file_path: str) -> str:
-    """Sanitizes the file path to ensure it stays within /app."""
-    base_dir = os.path.realpath("/app")
+    """Sanitizes the file path to ensure it stays within the workspace."""
+    base_dir = WORKSPACE_DIR
     # Remove leading slashes to ensure path is relative
     clean_path = file_path.lstrip("/")
     full_path = os.path.realpath(os.path.join(base_dir, clean_path))
 
     if os.path.commonpath([base_dir, full_path]) != base_dir:
-        raise ValueError("Access denied: Path must be within /app")
+        raise ValueError("Access denied: Path must be within the workspace")
     
     return full_path
 
@@ -55,6 +57,12 @@ async def health_check():
     """A simple health check endpoint to confirm the server is running."""
     return {"status": "ok", "message": "Sandbox Runtime is active."}
 
+
+@app.on_event("startup")
+async def ensure_workspace():
+    """Ensure the command/file workspace exists and is writable."""
+    os.makedirs(WORKSPACE_DIR, exist_ok=True)
+
 @app.post("/execute", summary="Execute a shell command", response_model=ExecuteResponse)
 async def execute_command(request: ExecuteRequest):
     """
@@ -65,12 +73,12 @@ async def execute_command(request: ExecuteRequest):
         # Split the command string into a list to safely pass to subprocess
         args = shlex.split(request.command)
         
-        # Execute the command, always from the /app directory
+        # Execute the command from the isolated workspace directory.
         process = subprocess.run(
             args,
             capture_output=True,
             text=True,
-            cwd="/app" 
+            cwd=WORKSPACE_DIR,
         )
         return ExecuteResponse(
             stdout=process.stdout,
@@ -87,11 +95,11 @@ async def execute_command(request: ExecuteRequest):
 @app.post("/upload", summary="Upload a file to the sandbox")
 async def upload_file(file: UploadFile = File(...)):
     """
-    Receives a file and saves it to the /app directory in the sandbox.
+    Receives a file and saves it to the workspace directory in the sandbox.
     """
     try:
         logging.info(f"--- UPLOAD_FILE CALLED: Attempting to save '{file.filename}' ---")
-        file_path = os.path.join("/app", file.filename)
+        file_path = get_safe_path(file.filename)
         
         with open(file_path, "wb") as f:
             f.write(await file.read())
@@ -110,7 +118,7 @@ async def upload_file(file: UploadFile = File(...)):
 @app.get("/download/{encoded_file_path:path}", summary="Download a file from the sandbox")
 async def download_file(encoded_file_path: str):
     """
-    Downloads a specified file from the /app directory in the sandbox.
+    Downloads a specified file from the workspace directory in the sandbox.
     """
     decoded_path = urllib.parse.unquote(encoded_file_path)
     try:
@@ -125,7 +133,7 @@ async def download_file(encoded_file_path: str):
 @app.get("/list/{encoded_file_path:path}", summary="List files in a directory")
 async def list_files(encoded_file_path: str):
     """
-    Lists the contents of a directory under the /app directory in the sandbox.
+    Lists the contents of a directory under the workspace directory in the sandbox.
     """
     decoded_path = urllib.parse.unquote(encoded_file_path)
     try:
@@ -154,7 +162,7 @@ async def list_files(encoded_file_path: str):
 @app.get("/exists/{encoded_file_path:path}", summary="Check if the relative path exists")
 async def exists(encoded_file_path: str):
     """
-    Checks if a specified file or directory exists under the /app directory in the sandbox.
+    Checks if a specified file or directory exists under the workspace directory in the sandbox.
     """
     decoded_path = urllib.parse.unquote(encoded_file_path)
     try:

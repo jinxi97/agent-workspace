@@ -272,7 +272,7 @@ sandbox_template = kubernetes.apiextensions.CustomResource(
                 "containers": [
                     {
                         "name": "python-runtime",
-                        "image": "registry.k8s.io/agent-sandbox/python-runtime-sandbox:v0.1.0",
+                        "image": "us-central1-docker.pkg.dev/funky-485504/agent-sandbox/python-runtime-sandbox-custom:v3",
                         "ports": [{"containerPort": 8888}],
                         "readinessProbe": {
                             "httpGet": {"path": "/", "port": 8888},
