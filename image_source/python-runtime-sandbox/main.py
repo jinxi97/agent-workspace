@@ -14,7 +14,6 @@
 
 import subprocess
 import os
-import shlex
 import logging
 import urllib.parse
 
@@ -67,15 +66,12 @@ async def ensure_workspace():
 async def execute_command(request: ExecuteRequest):
     """
     Executes a shell command inside the sandbox and returns its output.
-    Uses shlex.split for security to prevent shell injection.
+    Runs the full command string in a shell.
     """
     try:
-        # Split the command string into a list to safely pass to subprocess
-        args = shlex.split(request.command)
-        
         # Execute the command from the isolated workspace directory.
         process = subprocess.run(
-            args,
+            request.command,
             capture_output=True,
             text=True,
             cwd=WORKSPACE_DIR,

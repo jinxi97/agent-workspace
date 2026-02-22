@@ -272,7 +272,7 @@ sandbox_template = kubernetes.apiextensions.CustomResource(
                 "containers": [
                     {
                         "name": "python-runtime",
-                        "image": "us-central1-docker.pkg.dev/funky-485504/agent-sandbox/python-runtime-sandbox-custom:v3",
+                        "image": "us-central1-docker.pkg.dev/funky-485504/agent-sandbox/python-runtime-sandbox-custom:v4",
                         "command": ["/usr/local/bin/uvicorn"],
                         "args": [
                             "main:app",
