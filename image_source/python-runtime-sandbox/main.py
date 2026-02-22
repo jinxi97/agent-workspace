@@ -22,6 +22,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 WORKSPACE_DIR = os.path.realpath(os.getenv("WORKSPACE_DIR", "/tmp/workspace"))
+RUNTIME_DIR = os.path.realpath(os.getenv("XDG_RUNTIME_DIR", "/tmp/runtime"))
+CACHE_DIR = os.path.realpath(os.getenv("XDG_CACHE_HOME", os.path.join(WORKSPACE_DIR, ".cache")))
+CONFIG_DIR = os.path.realpath(os.getenv("XDG_CONFIG_HOME", os.path.join(WORKSPACE_DIR, ".config")))
 
 class ExecuteRequest(BaseModel):
     """Request model for the /execute endpoint."""
@@ -61,6 +64,9 @@ async def health_check():
 async def ensure_workspace():
     """Ensure the command/file workspace exists and is writable."""
     os.makedirs(WORKSPACE_DIR, exist_ok=True)
+    os.makedirs(RUNTIME_DIR, exist_ok=True)
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    os.makedirs(CONFIG_DIR, exist_ok=True)
 
 @app.post("/execute", summary="Execute a shell command", response_model=ExecuteResponse)
 async def execute_command(request: ExecuteRequest):
@@ -69,12 +75,23 @@ async def execute_command(request: ExecuteRequest):
     Runs the full command string in a shell.
     """
     try:
+        cmd_env = os.environ.copy()
+        cmd_env.update(
+            {
+                "HOME": WORKSPACE_DIR,
+                "XDG_RUNTIME_DIR": RUNTIME_DIR,
+                "XDG_CACHE_HOME": CACHE_DIR,
+                "XDG_CONFIG_HOME": CONFIG_DIR,
+            }
+        )
+
         # Execute the command from the isolated workspace directory.
         process = subprocess.run(
             request.command,
             capture_output=True,
             text=True,
             cwd=WORKSPACE_DIR,
+            env=cmd_env,
             shell=True,
         )
         return ExecuteResponse(

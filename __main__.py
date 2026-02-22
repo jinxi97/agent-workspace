@@ -272,7 +272,7 @@ sandbox_template = kubernetes.apiextensions.CustomResource(
                 "containers": [
                     {
                         "name": "python-runtime",
-                        "image": "us-central1-docker.pkg.dev/funky-485504/agent-sandbox/python-runtime-sandbox-custom:v4",
+                        "image": "us-central1-docker.pkg.dev/funky-485504/agent-sandbox/python-runtime-sandbox-custom:v8",
                         "command": ["/usr/local/bin/uvicorn"],
                         "args": [
                             "main:app",
@@ -359,6 +359,11 @@ fastapi_sandboxclaims_role = kubernetes.rbac.v1.Role(
             "apiGroups": ["agents.x-k8s.io"],
             "resources": ["sandboxclaims", "sandboxes", "sandboxtemplates"],
             "verbs": ["create", "get", "list", "watch", "update", "patch", "delete"],
+        },
+        {
+            "apiGroups": ["podsnapshot.gke.io"],
+            "resources": ["podsnapshotmanualtriggers", "podsnapshots"],
+            "verbs": ["create", "get", "list", "watch", "delete"],
         },
     ],
     opts=pulumi.ResourceOptions(depends_on=[snapshot_ns]),

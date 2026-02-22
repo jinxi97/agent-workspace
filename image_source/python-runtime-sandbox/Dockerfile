@@ -1,7 +1,8 @@
-# Use the official Python image from the Docker Hub as the base image.  
-FROM python:3.11-slim
+# Use the official Python image from the Docker Hub as the base image.
+FROM python:3.13
 
 WORKDIR /app
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # Install OS tools and Node.js/npm for agent-browser.
 RUN apt-get update && \
@@ -10,6 +11,8 @@ RUN apt-get update && \
         git \
         npm && \
     npm install -g agent-browser && \
+    npx playwright install --with-deps chromium && \
+    agent-browser install && \
     rm -rf /var/lib/apt/lists/*
 
 # Installation of dependencies for python runtime sandbox.
@@ -20,7 +23,7 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.txt
 COPY main.py .
 
 # Change ownership of the /app directory to the non-root user 1000.
-RUN chown -R 1000:1000 /app
+RUN chown -R 1000:1000 /app /ms-playwright
 USER 1000
 
 # Expose the port that the Uvicorn server will run on.
