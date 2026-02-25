@@ -42,6 +42,7 @@ snapshot_namespace = _required_env("SNAPSHOT_NAMESPACE")
 snapshot_ksa_name = _required_env("SNAPSHOT_KSA_NAME")
 sandbox_template_revision = _required_env("SANDBOX_TEMPLATE_REVISION")
 sandbox_warm_pool_replicas = _int_env("SANDBOX_WARM_POOL_REPLICAS", 2)
+sandbox_router_image = _required_env("SANDBOX_ROUTER_IMAGE")
 fastapi_app_name = _required_env("FASTAPI_APP_NAME")
 fastapi_container_port = _int_env("FASTAPI_CONTAINER_PORT", 8080)
 fastapi_service_port = _int_env("FASTAPI_SERVICE_PORT", 80)
@@ -186,18 +187,26 @@ bucket_object_user_for_gke_snapshot_controller = storage.BucketIAMMember(
 
 # These resources use the default Pulumi Kubernetes provider, which reads kubeconfig
 # from ~/.kube/config. Run gcloud get-credentials before pulumi up.
+agent_sandbox_system_ns = kubernetes.core.v1.Namespace(
+    "agent-sandbox-system-namespace",
+    metadata={"name": "agent-sandbox-system"},
+    opts=pulumi.ResourceOptions(depends_on=[node_pool]),
+)
+
 agent_sandbox_manifest = kubernetes.yaml.ConfigFile(
     "agent-sandbox-manifest",
     file=f"https://github.com/kubernetes-sigs/agent-sandbox/releases/download/{agent_sandbox_version}/manifest.yaml",
     resource_prefix="agent-sandbox-manifest",
-    opts=pulumi.ResourceOptions(depends_on=[node_pool]),
+    opts=pulumi.ResourceOptions(depends_on=[agent_sandbox_system_ns]),
 )
 
 agent_sandbox_extensions = kubernetes.yaml.ConfigFile(
     "agent-sandbox-extensions",
     file=f"https://github.com/kubernetes-sigs/agent-sandbox/releases/download/{agent_sandbox_version}/extensions.yaml",
     resource_prefix="agent-sandbox-extensions",
-    opts=pulumi.ResourceOptions(depends_on=[agent_sandbox_manifest]),
+    opts=pulumi.ResourceOptions(
+        depends_on=[agent_sandbox_system_ns, agent_sandbox_manifest]
+    ),
 )
 
 pod_snapshot_storage_config = kubernetes.apiextensions.CustomResource(
@@ -392,7 +401,11 @@ fastapi_sandboxclaims_rolebinding = kubernetes.rbac.v1.RoleBinding(
 
 fastapi_deployment = kubernetes.apps.v1.Deployment(
     "fastapi-deployment",
-    metadata={"name": fastapi_app_name, "labels": fastapi_labels},
+    metadata={
+        "name": fastapi_app_name,
+        "labels": fastapi_labels,
+        "annotations": {"pulumi.com/skipAwait": "true"},
+    },
     spec={
         "replicas": 1,
         "selector": {"matchLabels": fastapi_labels},
@@ -411,7 +424,7 @@ fastapi_deployment = kubernetes.apps.v1.Deployment(
         },
     },
     opts=pulumi.ResourceOptions(
-        depends_on=[node_pool, fastapi_sandboxclaims_rolebinding],
+        depends_on=[node_pool, fastapi_ksa, fastapi_sandboxclaims_rolebinding],
     ),
 )
 
@@ -472,7 +485,11 @@ sandbox_router_rolebinding = kubernetes.rbac.v1.RoleBinding(
 
 sandbox_router_service = kubernetes.core.v1.Service(
     "sandbox-router-service",
-    metadata={"name": "sandbox-router-svc", "namespace": "default"},
+    metadata={
+        "name": "sandbox-router-svc",
+        "namespace": "default",
+        "annotations": {"pulumi.com/skipAwait": "true"},
+    },
     spec={
         "type": "ClusterIP",
         "selector": sandbox_router_labels,
@@ -485,12 +502,19 @@ sandbox_router_service = kubernetes.core.v1.Service(
             }
         ],
     },
-    opts=pulumi.ResourceOptions(depends_on=[node_pool]),
+    opts=pulumi.ResourceOptions(
+        depends_on=[node_pool],
+        custom_timeouts=pulumi.CustomTimeouts(create="30s", update="30s"),
+    ),
 )
 
 sandbox_router_deployment = kubernetes.apps.v1.Deployment(
     "sandbox-router-deployment",
-    metadata={"name": "sandbox-router-deployment", "namespace": "default"},
+    metadata={
+        "name": "sandbox-router-deployment",
+        "namespace": "default",
+        "annotations": {"pulumi.com/skipAwait": "true"},
+    },
     spec={
         "replicas": 2,
         "selector": {"matchLabels": sandbox_router_labels},
@@ -510,7 +534,7 @@ sandbox_router_deployment = kubernetes.apps.v1.Deployment(
                 "containers": [
                     {
                         "name": "router",
-                        "image": "us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/sandbox-router:v20251124-v0.1.0-10-ge26ddb2",
+                        "image": sandbox_router_image,
                         "ports": [{"containerPort": 8080}],
                         "readinessProbe": {
                             "httpGet": {"path": "/healthz", "port": 8080},
@@ -532,7 +556,8 @@ sandbox_router_deployment = kubernetes.apps.v1.Deployment(
         },
     },
     opts=pulumi.ResourceOptions(
-        depends_on=[sandbox_router_service, sandbox_router_rolebinding]
+        depends_on=[node_pool, sandbox_router_service, sandbox_router_ksa, sandbox_router_rolebinding],
+        custom_timeouts=pulumi.CustomTimeouts(create="30s", update="30s"),
     ),
 )
 
