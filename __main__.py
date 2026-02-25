@@ -59,6 +59,7 @@ cluster = container.Cluster(
     initial_node_count=1,
     min_master_version=gke_version,
     deletion_protection=False,
+    node_locations=["us-central1-a"],
     addons_config=container.ClusterAddonsConfigArgs(
         pod_snapshot_config=container.ClusterAddonsConfigPodSnapshotConfigArgs(
             enabled=True,
@@ -66,6 +67,13 @@ cluster = container.Cluster(
     ),
     workload_identity_config=container.ClusterWorkloadIdentityConfigArgs(
         workload_pool=f"{project_id}.svc.id.goog",
+    ),
+    maintenance_policy=container.ClusterMaintenancePolicyArgs(
+        recurring_window=container.ClusterMaintenancePolicyRecurringWindowArgs(
+            start_time="2026-01-01T02:00:00Z",
+            end_time="2026-01-01T06:00:00Z",
+            recurrence="FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR",
+        ),
     ),
     node_config=container.ClusterNodeConfigArgs(
         machine_type=machine_type,
@@ -415,7 +423,7 @@ fastapi_deployment = kubernetes.apps.v1.Deployment(
         "annotations": {"pulumi.com/skipAwait": "true"},
     },
     spec={
-        "replicas": 1,
+        "replicas": 2,
         "selector": {"matchLabels": fastapi_labels},
         "template": {
             "metadata": {"labels": fastapi_labels},
@@ -447,6 +455,19 @@ fastapi_service = kubernetes.core.v1.Service(
         "type": "LoadBalancer",
         "selector": fastapi_labels,
         "ports": [{"port": fastapi_service_port, "targetPort": fastapi_container_port}],
+    },
+    opts=pulumi.ResourceOptions(depends_on=[fastapi_deployment]),
+)
+
+fastapi_pdb = kubernetes.policy.v1.PodDisruptionBudget(
+    "fastapi-pdb",
+    metadata={
+        "name": f"{fastapi_app_name}-pdb",
+        "namespace": workloads_ns.metadata["name"],
+    },
+    spec={
+        "minAvailable": 1,
+        "selector": {"matchLabels": fastapi_labels},
     },
     opts=pulumi.ResourceOptions(depends_on=[fastapi_deployment]),
 )
@@ -572,6 +593,19 @@ sandbox_router_deployment = kubernetes.apps.v1.Deployment(
         depends_on=[node_pool, sandbox_router_service, sandbox_router_ksa, sandbox_router_rolebinding],
         custom_timeouts=pulumi.CustomTimeouts(create="30s", update="30s"),
     ),
+)
+
+sandbox_router_pdb = kubernetes.policy.v1.PodDisruptionBudget(
+    "sandbox-router-pdb",
+    metadata={
+        "name": "sandbox-router-pdb",
+        "namespace": workloads_ns.metadata["name"],
+    },
+    spec={
+        "minAvailable": 1,
+        "selector": {"matchLabels": sandbox_router_labels},
+    },
+    opts=pulumi.ResourceOptions(depends_on=[sandbox_router_deployment]),
 )
 
 cloud_build_sa = serviceaccount.Account(
