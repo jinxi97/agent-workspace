@@ -88,8 +88,12 @@ node_pool = container.NodePool(
     name=node_pool_name,
     cluster=cluster.name,
     location=region,
-    node_count=1,
+    initial_node_count=1,
     version=gke_version,
+    autoscaling=container.NodePoolAutoscalingArgs(
+        min_node_count=1,
+        max_node_count=5,
+    ),
     node_config=container.NodePoolNodeConfigArgs(
         machine_type=machine_type,
         image_type="COS_CONTAINERD",
