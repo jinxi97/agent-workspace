@@ -43,6 +43,7 @@ snapshot_ksa_name = _required_env("SNAPSHOT_KSA_NAME")
 sandbox_template_revision = _required_env("SANDBOX_TEMPLATE_REVISION")
 sandbox_warm_pool_replicas = _int_env("SANDBOX_WARM_POOL_REPLICAS", 2)
 sandbox_router_image = _required_env("SANDBOX_ROUTER_IMAGE")
+workloads_namespace = _required_env("WORKLOADS_NAMESPACE")
 fastapi_app_name = _required_env("FASTAPI_APP_NAME")
 fastapi_container_port = _int_env("FASTAPI_CONTAINER_PORT", 8080)
 fastapi_service_port = _int_env("FASTAPI_SERVICE_PORT", 80)
@@ -125,6 +126,11 @@ pod_snapshot_gcs_read_writer_role = projects.IAMCustomRole(
 snapshot_ns = kubernetes.core.v1.Namespace(
     "snapshot-namespace",
     metadata={"name": snapshot_namespace},
+)
+
+workloads_ns = kubernetes.core.v1.Namespace(
+    "workloads-namespace",
+    metadata={"name": workloads_namespace},
 )
 
 snapshot_ksa = kubernetes.core.v1.ServiceAccount(
@@ -348,8 +354,9 @@ fastapi_ksa = kubernetes.core.v1.ServiceAccount(
     "fastapi-ksa",
     metadata={
         "name": f"{fastapi_app_name}-sa",
-        "namespace": "default",
+        "namespace": workloads_ns.metadata["name"],
     },
+    opts=pulumi.ResourceOptions(depends_on=[workloads_ns]),
 )
 
 fastapi_sandboxclaims_role = kubernetes.rbac.v1.Role(
@@ -393,7 +400,7 @@ fastapi_sandboxclaims_rolebinding = kubernetes.rbac.v1.RoleBinding(
         {
             "kind": "ServiceAccount",
             "name": fastapi_ksa.metadata["name"],
-            "namespace": "default",
+            "namespace": workloads_ns.metadata["name"],
         }
     ],
     opts=pulumi.ResourceOptions(depends_on=[fastapi_ksa, fastapi_sandboxclaims_role]),
@@ -403,6 +410,7 @@ fastapi_deployment = kubernetes.apps.v1.Deployment(
     "fastapi-deployment",
     metadata={
         "name": fastapi_app_name,
+        "namespace": workloads_ns.metadata["name"],
         "labels": fastapi_labels,
         "annotations": {"pulumi.com/skipAwait": "true"},
     },
@@ -418,6 +426,10 @@ fastapi_deployment = kubernetes.apps.v1.Deployment(
                         "name": fastapi_app_name,
                         "image": f"gcr.io/{project_id}/{fastapi_app_name}:latest",
                         "ports": [{"containerPort": fastapi_container_port}],
+                        "resources": {
+                            "requests": {"cpu": "250m", "memory": "512Mi"},
+                            "limits": {"cpu": "1000m", "memory": "1Gi"},
+                        },
                     }
                 ]
             },
@@ -430,7 +442,7 @@ fastapi_deployment = kubernetes.apps.v1.Deployment(
 
 fastapi_service = kubernetes.core.v1.Service(
     "fastapi-service",
-    metadata={"name": fastapi_app_name, "labels": fastapi_labels},
+    metadata={"name": fastapi_app_name, "namespace": workloads_ns.metadata["name"], "labels": fastapi_labels},
     spec={
         "type": "LoadBalancer",
         "selector": fastapi_labels,
@@ -443,7 +455,8 @@ sandbox_router_labels = {"app": "sandbox-router"}
 
 sandbox_router_ksa = kubernetes.core.v1.ServiceAccount(
     "sandbox-router-ksa",
-    metadata={"name": "sandbox-router-sa", "namespace": "default"},
+    metadata={"name": "sandbox-router-sa", "namespace": workloads_ns.metadata["name"]},
+    opts=pulumi.ResourceOptions(depends_on=[workloads_ns]),
 )
 
 sandbox_router_role = kubernetes.rbac.v1.Role(
@@ -477,7 +490,7 @@ sandbox_router_rolebinding = kubernetes.rbac.v1.RoleBinding(
         {
             "kind": "ServiceAccount",
             "name": sandbox_router_ksa.metadata["name"],
-            "namespace": "default",
+            "namespace": workloads_ns.metadata["name"],
         }
     ],
     opts=pulumi.ResourceOptions(depends_on=[sandbox_router_ksa, sandbox_router_role]),
@@ -487,7 +500,7 @@ sandbox_router_service = kubernetes.core.v1.Service(
     "sandbox-router-service",
     metadata={
         "name": "sandbox-router-svc",
-        "namespace": "default",
+        "namespace": workloads_ns.metadata["name"],
         "annotations": {"pulumi.com/skipAwait": "true"},
     },
     spec={
@@ -512,7 +525,7 @@ sandbox_router_deployment = kubernetes.apps.v1.Deployment(
     "sandbox-router-deployment",
     metadata={
         "name": "sandbox-router-deployment",
-        "namespace": "default",
+        "namespace": workloads_ns.metadata["name"],
         "annotations": {"pulumi.com/skipAwait": "true"},
     },
     spec={
