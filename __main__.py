@@ -57,6 +57,7 @@ cluster = container.Cluster(
     name=cluster_name,
     location=region,
     initial_node_count=1,
+    remove_default_node_pool=True,
     min_master_version=gke_version,
     deletion_protection=False,
     node_locations=["us-central1-a"],
@@ -75,9 +76,22 @@ cluster = container.Cluster(
             recurrence="FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR",
         ),
     ),
-    node_config=container.ClusterNodeConfigArgs(
+)
+
+system_node_pool = container.NodePool(
+    "system-node-pool",
+    name="system-node-pool",
+    cluster=cluster.name,
+    location=region,
+    initial_node_count=1,
+    version=gke_version,
+    autoscaling=container.NodePoolAutoscalingArgs(
+        min_node_count=1,
+        max_node_count=5,
+    ),
+    node_config=container.NodePoolNodeConfigArgs(
         machine_type=machine_type,
-        workload_metadata_config=container.ClusterNodeConfigWorkloadMetadataConfigArgs(
+        workload_metadata_config=container.NodePoolNodeConfigWorkloadMetadataConfigArgs(
             mode="GKE_METADATA",
         ),
     ),
@@ -433,6 +447,7 @@ fastapi_deployment = kubernetes.apps.v1.Deployment(
             "metadata": {"labels": fastapi_labels},
             "spec": {
                 "serviceAccountName": fastapi_ksa.metadata["name"],
+                "nodeSelector": {"cloud.google.com/gke-nodepool": "system-node-pool"},
                 "containers": [
                     {
                         "name": fastapi_app_name,
@@ -448,7 +463,7 @@ fastapi_deployment = kubernetes.apps.v1.Deployment(
         },
     },
     opts=pulumi.ResourceOptions(
-        depends_on=[node_pool, fastapi_ksa, fastapi_sandboxclaims_rolebinding],
+        depends_on=[system_node_pool, fastapi_ksa, fastapi_sandboxclaims_rolebinding],
     ),
 )
 
@@ -541,7 +556,7 @@ sandbox_router_service = kubernetes.core.v1.Service(
         ],
     },
     opts=pulumi.ResourceOptions(
-        depends_on=[node_pool],
+        depends_on=[system_node_pool],
         custom_timeouts=pulumi.CustomTimeouts(create="30s", update="30s"),
     ),
 )
@@ -560,6 +575,7 @@ sandbox_router_deployment = kubernetes.apps.v1.Deployment(
             "metadata": {"labels": sandbox_router_labels},
             "spec": {
                 "serviceAccountName": sandbox_router_ksa.metadata["name"],
+                "nodeSelector": {"cloud.google.com/gke-nodepool": "system-node-pool"},
                 "topologySpreadConstraints": [
                     {
                         "maxSkew": 1,
@@ -594,7 +610,7 @@ sandbox_router_deployment = kubernetes.apps.v1.Deployment(
         },
     },
     opts=pulumi.ResourceOptions(
-        depends_on=[node_pool, sandbox_router_service, sandbox_router_ksa, sandbox_router_rolebinding],
+        depends_on=[system_node_pool, sandbox_router_service, sandbox_router_ksa, sandbox_router_rolebinding],
         custom_timeouts=pulumi.CustomTimeouts(create="30s", update="30s"),
     ),
 )
@@ -731,7 +747,8 @@ fastapi_external_ip = fastapi_service.status.apply(_service_external_ip)
 pulumi.export("project_id", project_id)
 pulumi.export("region", region)
 pulumi.export("cluster_name", cluster.name)
-pulumi.export("node_pool_name", node_pool.name)
+pulumi.export("system_node_pool_name", system_node_pool.name)
+pulumi.export("sandbox_node_pool_name", node_pool.name)
 pulumi.export("agent_sandbox_version", agent_sandbox_version)
 pulumi.export("snapshots_bucket_name", snapshots_bucket.name)
 pulumi.export("snapshot_folder", snapshots_managed_folder.name)
