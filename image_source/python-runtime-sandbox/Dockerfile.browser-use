@@ -1,0 +1,35 @@
+# Use the official Python image from the Docker Hub as the base image.
+FROM python:3.13
+
+WORKDIR /app
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+# Install OS tools needed for browser-use/Playwright setup.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        curl \
+        git && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install browser-use, uv/uvx, and browser dependencies.
+RUN pip install --no-cache-dir browser-use uv && \
+    browser-use install
+
+# Installation of dependencies for python runtime sandbox.
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir --require-hashes -r requirements.txt
+
+COPY main.py .
+
+# Change ownership of runtime paths to the non-root user 1000.
+RUN chown -R 1000:1000 /app /ms-playwright
+USER 1000
+
+# Expose the port that the Uvicorn server will run on.
+# This must match the port in the CMD instruction below.
+EXPOSE 8888
+
+# The command to run when the container starts.
+# This starts the Uvicorn server, making our API available.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8888", "--log-level", "trace"]

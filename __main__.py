@@ -45,6 +45,7 @@ sandbox_warm_pool_replicas = _int_env("SANDBOX_WARM_POOL_REPLICAS", 2)
 sandbox_router_image = _required_env("SANDBOX_ROUTER_IMAGE")
 workloads_namespace = _required_env("WORKLOADS_NAMESPACE")
 fastapi_app_name = _required_env("FASTAPI_APP_NAME")
+fastapi_replicas = _int_env("FASTAPI_REPLICAS", 1)
 fastapi_container_port = _int_env("FASTAPI_CONTAINER_PORT", 8080)
 fastapi_service_port = _int_env("FASTAPI_SERVICE_PORT", 80)
 cloudbuild_file = _required_env("CLOUDBUILD_FILE")
@@ -313,7 +314,7 @@ sandbox_template = kubernetes.apiextensions.CustomResource(
                 "containers": [
                     {
                         "name": "python-runtime",
-                        "image": "us-central1-docker.pkg.dev/funky-485504/agent-sandbox/python-runtime-sandbox-custom:v8",
+                        "image": "us-central1-docker.pkg.dev/funky-485504/agent-sandbox/python-runtime-sandbox-custom:v10",
                         "command": ["/usr/local/bin/uvicorn"],
                         "args": [
                             "main:app",
@@ -441,7 +442,9 @@ fastapi_deployment = kubernetes.apps.v1.Deployment(
         "annotations": {"pulumi.com/skipAwait": "true"},
     },
     spec={
-        "replicas": 2,
+        # Keep single replica by default because workspace state is in-memory.
+        # Multiple replicas can cause "Workspace not found" when requests land on different pods.
+        "replicas": fastapi_replicas,
         "selector": {"matchLabels": fastapi_labels},
         "template": {
             "metadata": {"labels": fastapi_labels},
