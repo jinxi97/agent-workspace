@@ -11,6 +11,24 @@ The `tester.py` script acts as a client to interact with the python API server, 
 Usage:
 `python tester.py [ip] [port]`
 
+## Build and push image for GKE (Artifact Registry)
+
+Use this when updating the warm pool image in GKE. Build `linux/amd64` to match GKE node architecture.
+
+```bash
+IMAGE="us-central1-docker.pkg.dev/funky-485504/agent-sandbox/python-runtime-sandbox-custom:v12"
+
+gcloud config set project funky-485504
+gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+docker buildx build \
+  --platform linux/amd64 \
+  -f image_source/python-runtime-sandbox/Dockerfile.browser-use \
+  -t "${IMAGE}" \
+  image_source/python-runtime-sandbox \
+  --push
+```
+
 ## Python Classes in `main.py`
 
 The `main.py` file defines the following Pydantic models to ensure type-safe data for the API endpoints:

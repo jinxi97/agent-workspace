@@ -32,4 +32,4 @@ EXPOSE 8888
 
 # The command to run when the container starts.
 # This starts the Uvicorn server, making our API available.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8888", "--log-level", "trace"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8888", "--log-level", "info"]
