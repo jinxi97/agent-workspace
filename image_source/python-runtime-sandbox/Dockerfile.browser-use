@@ -8,12 +8,17 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         curl \
-        git && \
+        git \
+        nodejs \
+        npm && \
     rm -rf /var/lib/apt/lists/*
 
 # Install browser-use, uv/uvx, and browser dependencies.
 RUN pip install --no-cache-dir browser-use uv && \
     browser-use install
+
+# Install Cloudflare Wrangler CLI (uses Cloudflare API via CLI commands).
+RUN npm install -g wrangler
 
 # Installation of dependencies for python runtime sandbox.
 COPY requirements.txt .

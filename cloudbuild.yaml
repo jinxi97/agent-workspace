@@ -1,0 +1,20 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --platform
+      - linux/amd64
+      - -f
+      - image_source/python-runtime-sandbox/Dockerfile.browser-use
+      - -t
+      - ${_LOCATION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE}:${_TAG}
+      - image_source/python-runtime-sandbox
+
+images:
+  - ${_LOCATION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE}:${_TAG}
+
+substitutions:
+  _LOCATION: us-central1
+  _REPO: agent-sandbox
+  _IMAGE: python-runtime-sandbox-custom
+  _TAG: v13
