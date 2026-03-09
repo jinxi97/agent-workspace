@@ -42,6 +42,8 @@ snapshot_namespace = _required_env("SNAPSHOT_NAMESPACE")
 snapshot_ksa_name = _required_env("SNAPSHOT_KSA_NAME")
 sandbox_template_revision = _required_env("SANDBOX_TEMPLATE_REVISION")
 sandbox_warm_pool_replicas = _int_env("SANDBOX_WARM_POOL_REPLICAS", 2)
+claude_agent_sandbox_template_revision = _required_env("CLAUDE_AGENT_SANDBOX_TEMPLATE_REVISION")
+claude_agent_sandbox_warm_pool_replicas = _int_env("CLAUDE_AGENT_SANDBOX_WARM_POOL_REPLICAS", 2)
 sandbox_router_image = _required_env("SANDBOX_ROUTER_IMAGE")
 workloads_namespace = _required_env("WORKLOADS_NAMESPACE")
 fastapi_app_name = _required_env("FASTAPI_APP_NAME")
@@ -204,6 +206,13 @@ bucket_object_user_for_snapshot_ksa = storage.BucketIAMMember(
     bucket=snapshots_bucket.name,
     member=snapshot_ksa_principal,
     role="roles/storage.objectUser",
+)
+
+vertex_ai_user_for_snapshot_ksa = projects.IAMMember(
+    "snapshot-ksa-vertex-ai-user",
+    project=project_id,
+    role="roles/aiplatform.user",
+    member=snapshot_ksa_principal,
 )
 
 gke_snapshot_controller_service_agent = pulumi.Output.format(
@@ -373,6 +382,84 @@ sandbox_warm_pool = kubernetes.apiextensions.CustomResource(
         },
     },
     opts=pulumi.ResourceOptions(depends_on=[sandbox_template]),
+)
+
+claude_agent_sandbox_template = kubernetes.apiextensions.CustomResource(
+    "claude-agent-sandbox-template",
+    api_version="extensions.agents.x-k8s.io/v1alpha1",
+    kind="SandboxTemplate",
+    metadata={
+        "name": "claude-agent-sandbox-template",
+        "namespace": snapshot_ns.metadata["name"],
+        "annotations": {
+            "funky.dev/template-revision": claude_agent_sandbox_template_revision,
+        },
+    },
+    spec={
+        "podTemplate": {
+            "metadata": {
+                "labels": {
+                    "app": "agent-sandbox-workload",
+                },
+            },
+            "spec": {
+                "serviceAccountName": snapshot_ksa.metadata["name"],
+                "runtimeClassName": "gvisor",
+                "containers": [
+                    {
+                        "name": "claude-agent-sandbox",
+                        "image": "us-central1-docker.pkg.dev/funky-485504/agent-sandbox/claude-agent-sandbox:v2",
+                        "env": [
+                            {"name": "CLAUDE_CODE_USE_VERTEX", "value": "1"},
+                        ],
+                        "ports": [{"containerPort": 8888}],
+                        "readinessProbe": {
+                            "httpGet": {"path": "/", "port": 8888},
+                            "initialDelaySeconds": 0,
+                            "periodSeconds": 1,
+                        },
+                        "resources": {
+                            "requests": {
+                                "cpu": "250m",
+                                "memory": "512Mi",
+                                "ephemeral-storage": "512Mi",
+                            },
+                            "limits": {
+                                "cpu": "1",
+                                "memory": "1Gi",
+                                "ephemeral-storage": "1Gi",
+                            },
+                        },
+                    }
+                ],
+                "restartPolicy": "OnFailure",
+            },
+        },
+    },
+    opts=pulumi.ResourceOptions(
+        depends_on=[
+            agent_sandbox_extensions,
+            snapshot_ksa,
+            pod_snapshot_policy,
+        ]
+    ),
+)
+
+claude_agent_sandbox_warm_pool = kubernetes.apiextensions.CustomResource(
+    "claude-agent-sandbox-warmpool",
+    api_version="extensions.agents.x-k8s.io/v1alpha1",
+    kind="SandboxWarmPool",
+    metadata={
+        "name": "claude-agent-sandbox-warmpool",
+        "namespace": snapshot_ns.metadata["name"],
+    },
+    spec={
+        "replicas": claude_agent_sandbox_warm_pool_replicas,
+        "sandboxTemplateRef": {
+            "name": "claude-agent-sandbox-template",
+        },
+    },
+    opts=pulumi.ResourceOptions(depends_on=[claude_agent_sandbox_template]),
 )
 
 fastapi_labels = {"app": fastapi_app_name}
