@@ -408,9 +408,10 @@ claude_agent_sandbox_template = kubernetes.apiextensions.CustomResource(
                 "containers": [
                     {
                         "name": "claude-agent-sandbox",
-                        "image": "us-central1-docker.pkg.dev/funky-485504/agent-sandbox/claude-agent-sandbox:v2",
+                        "image": "us-central1-docker.pkg.dev/funky-485504/agent-sandbox/claude-agent-sandbox:v3",
                         "env": [
                             {"name": "CLAUDE_CODE_USE_VERTEX", "value": "1"},
+                            {"name": "ANTHROPIC_VERTEX_PROJECT_ID", "value": project_id},
                         ],
                         "ports": [{"containerPort": 8888}],
                         "readinessProbe": {
