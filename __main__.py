@@ -465,6 +465,27 @@ claude_agent_sandbox_warm_pool = kubernetes.apiextensions.CustomResource(
 
 fastapi_labels = {"app": fastapi_app_name}
 
+# Kubernetes Secret for sensitive env vars (DB_PASS, JWT_SECRET).
+# Pulumi only creates the placeholder; actual values are managed out-of-band.
+# To create or update the secret from GCP Secret Manager, run:
+#   kubectl create secret generic agent-workspace-secrets \
+#     -n agent-sandbox-application \
+#     --from-literal=db-pass="$(gcloud secrets versions access latest --secret=db_password)" \
+#     --from-literal=jwt-secret="$(gcloud secrets versions access latest --secret=jwt_secret)" \
+#     --dry-run=client -o yaml | kubectl apply -f -
+agent_workspace_secret = kubernetes.core.v1.Secret(
+    "agent-workspace-secrets",
+    metadata={
+        "name": "agent-workspace-secrets",
+        "namespace": workloads_ns.metadata["name"],
+    },
+    string_data={},
+    opts=pulumi.ResourceOptions(
+        depends_on=[workloads_ns],
+        ignore_changes=["stringData", "data"],
+    ),
+)
+
 fastapi_ksa = kubernetes.core.v1.ServiceAccount(
     "fastapi-ksa",
     metadata={
@@ -472,6 +493,22 @@ fastapi_ksa = kubernetes.core.v1.ServiceAccount(
         "namespace": workloads_ns.metadata["name"],
     },
     opts=pulumi.ResourceOptions(depends_on=[workloads_ns]),
+)
+
+# Grant the FastAPI KSA permission to connect to Cloud SQL via Workload Identity.
+fastapi_ksa_principal = pulumi.Output.format(
+    "principal://iam.googleapis.com/projects/{0}/locations/global/workloadIdentityPools/{1}.svc.id.goog/subject/ns/{2}/sa/{3}",
+    project.number,
+    project_id,
+    workloads_ns.metadata["name"],
+    fastapi_ksa.metadata["name"],
+)
+
+fastapi_cloudsql_client = projects.IAMMember(
+    "fastapi-ksa-cloudsql-client",
+    project=project_id,
+    role="roles/cloudsql.client",
+    member=fastapi_ksa_principal,
 )
 
 fastapi_sandboxclaims_role = kubernetes.rbac.v1.Role(
@@ -527,7 +564,9 @@ fastapi_deployment = kubernetes.apps.v1.Deployment(
         "name": fastapi_app_name,
         "namespace": workloads_ns.metadata["name"],
         "labels": fastapi_labels,
-        "annotations": {"pulumi.com/skipAwait": "true"},
+        "annotations": {
+            "pulumi.com/skipAwait": "true",
+        },
     },
     spec={
         # Keep single replica by default because workspace state is in-memory.
@@ -544,6 +583,21 @@ fastapi_deployment = kubernetes.apps.v1.Deployment(
                         "name": fastapi_app_name,
                         "image": f"gcr.io/{project_id}/{fastapi_app_name}:latest",
                         "ports": [{"containerPort": fastapi_container_port}],
+                        "env": [
+                            {"name": "PORT", "value": str(fastapi_container_port)},
+                            {"name": "CLOUD_SQL_CONNECTION_NAME", "value": "funky-485504:us-central1:funky-landing"},
+                            {"name": "DB_USER", "value": "postgres"},
+                            {"name": "DB_NAME", "value": "workspace_api"},
+                            {"name": "GOOGLE_CLIENT_ID", "value": "819221826816-5v3r7pgtj96l56cs3770vesaa79r9rk5.apps.googleusercontent.com"},
+                            {
+                                "name": "DB_PASS",
+                                "valueFrom": {"secretKeyRef": {"name": "agent-workspace-secrets", "key": "db-pass"}},
+                            },
+                            {
+                                "name": "JWT_SECRET",
+                                "valueFrom": {"secretKeyRef": {"name": "agent-workspace-secrets", "key": "jwt-secret"}},
+                            },
+                        ],
                         "resources": {
                             "requests": {"cpu": "250m", "memory": "512Mi"},
                             "limits": {"cpu": "1000m", "memory": "1Gi"},
@@ -554,7 +608,10 @@ fastapi_deployment = kubernetes.apps.v1.Deployment(
         },
     },
     opts=pulumi.ResourceOptions(
-        depends_on=[system_node_pool, fastapi_ksa, fastapi_sandboxclaims_rolebinding],
+        depends_on=[system_node_pool, fastapi_ksa, fastapi_sandboxclaims_rolebinding, agent_workspace_secret],
+        # Cloud Build manages the image tag via `kubectl set image`, so Pulumi must
+        # not compete for ownership of that field.
+        ignore_changes=["spec.template.spec.containers[*].image"],
     ),
 )
 
