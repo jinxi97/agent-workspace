@@ -5,7 +5,7 @@ from typing import Any
 
 import pulumi
 from dotenv import load_dotenv
-from pulumi_gcp import cloudbuild, container, organizations, projects, serviceaccount, storage
+from pulumi_gcp import cloudbuild, compute, container, organizations, projects, serviceaccount, storage
 import pulumi_kubernetes as kubernetes
 
 load_dotenv()
@@ -615,15 +615,90 @@ fastapi_deployment = kubernetes.apps.v1.Deployment(
     ),
 )
 
+fastapi_backend_config = kubernetes.apiextensions.CustomResource(
+    "fastapi-backend-config",
+    api_version="cloud.google.com/v1",
+    kind="BackendConfig",
+    metadata={
+        "name": f"{fastapi_app_name}-backend-config",
+        "namespace": workloads_ns.metadata["name"],
+    },
+    spec={
+        "timeoutSec": 3600,
+    },
+    opts=pulumi.ResourceOptions(depends_on=[workloads_ns]),
+)
+
 fastapi_service = kubernetes.core.v1.Service(
     "fastapi-service",
-    metadata={"name": fastapi_app_name, "namespace": workloads_ns.metadata["name"], "labels": fastapi_labels},
+    metadata={
+        "name": fastapi_app_name,
+        "namespace": workloads_ns.metadata["name"],
+        "labels": fastapi_labels,
+        "annotations": {
+            "cloud.google.com/backend-config": f'{{"default": "{fastapi_app_name}-backend-config"}}',
+        },
+    },
     spec={
-        "type": "LoadBalancer",
+        "type": "NodePort",
         "selector": fastapi_labels,
         "ports": [{"port": fastapi_service_port, "targetPort": fastapi_container_port}],
     },
-    opts=pulumi.ResourceOptions(depends_on=[fastapi_deployment]),
+    opts=pulumi.ResourceOptions(depends_on=[fastapi_deployment, fastapi_backend_config]),
+)
+
+fastapi_static_ip = compute.GlobalAddress(
+    "fastapi-static-ip",
+    name="agent-workspace-api-ip",
+    project=project_id,
+)
+
+fastapi_managed_cert = kubernetes.apiextensions.CustomResource(
+    "fastapi-managed-cert",
+    api_version="networking.gke.io/v1",
+    kind="ManagedCertificate",
+    metadata={
+        "name": "agent-workspace-api-cert",
+        "namespace": workloads_ns.metadata["name"],
+    },
+    spec={"domains": ["api.funky.dev"]},
+)
+
+fastapi_frontend_config = kubernetes.apiextensions.CustomResource(
+    "fastapi-frontend-config",
+    api_version="networking.gke.io/v1beta1",
+    kind="FrontendConfig",
+    metadata={
+        "name": f"{fastapi_app_name}-frontend-config",
+        "namespace": workloads_ns.metadata["name"],
+    },
+    spec={
+        "redirectToHttps": {"enabled": True},
+    },
+    opts=pulumi.ResourceOptions(depends_on=[workloads_ns]),
+)
+
+fastapi_ingress = kubernetes.networking.v1.Ingress(
+    "fastapi-ingress",
+    metadata={
+        "name": fastapi_app_name,
+        "namespace": workloads_ns.metadata["name"],
+        "annotations": {
+            "kubernetes.io/ingress.global-static-ip-name": "agent-workspace-api-ip",
+            "networking.gke.io/managed-certificates": "agent-workspace-api-cert",
+            "kubernetes.io/ingress.class": "gce",
+            "networking.gke.io/v1beta1.FrontendConfig": f"{fastapi_app_name}-frontend-config",
+        },
+    },
+    spec={
+        "defaultBackend": {
+            "service": {
+                "name": fastapi_app_name,
+                "port": {"number": fastapi_service_port},
+            }
+        }
+    },
+    opts=pulumi.ResourceOptions(depends_on=[fastapi_service, fastapi_managed_cert, fastapi_static_ip, fastapi_frontend_config]),
 )
 
 fastapi_pdb = kubernetes.policy.v1.PodDisruptionBudget(
@@ -912,7 +987,8 @@ pulumi.export("sandbox_warm_pool", sandbox_warm_pool.metadata["name"])
 pulumi.export("sandbox_warm_pool_replicas", sandbox_warm_pool_replicas)
 pulumi.export("fastapi_deployment", fastapi_deployment.metadata["name"])
 pulumi.export("fastapi_service", fastapi_service.metadata["name"])
-pulumi.export("fastapi_external_ip", fastapi_external_ip)
+pulumi.export("fastapi_static_ip", fastapi_static_ip.address)
+pulumi.export("fastapi_ingress", fastapi_ingress.metadata["name"])
 pulumi.export("sandbox_router_deployment", sandbox_router_deployment.metadata["name"])
 pulumi.export("sandbox_router_service", sandbox_router_service.metadata["name"])
 pulumi.export("sandbox_router_service_account", sandbox_router_ksa.metadata["name"])
