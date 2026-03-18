@@ -276,28 +276,10 @@ pod_snapshot_storage_config = kubernetes.apiextensions.CustomResource(
     ),
 )
 
-pod_snapshot_policy = kubernetes.apiextensions.CustomResource(
-    "cpu-psp",
-    api_version="podsnapshot.gke.io/v1alpha1",
-    kind="PodSnapshotPolicy",
-    metadata={
-        "name": "cpu-psp",
-        "namespace": snapshot_ns.metadata["name"],
-    },
-    spec={
-        "storageConfigName": "cpu-pssc-gcs",
-        "selector": {
-            "matchLabels": {
-                "app": "agent-sandbox-workload",
-            },
-        },
-        "triggerConfig": {
-            "type": "manual",
-            "postCheckpoint": "resume",
-        },
-    },
-    opts=pulumi.ResourceOptions(depends_on=[pod_snapshot_storage_config]),
-)
+# NOTE: PodSnapshotPolicy resources are created dynamically per snapshot group
+# by the FastAPI application (main.py). Each workspace snapshot gets its own
+# policy with a unique `snapshot-group` label selector so that restore always
+# picks the correct snapshot, not just the latest across all workspaces.
 
 sandbox_template = kubernetes.apiextensions.CustomResource(
     "python-runtime-template",
@@ -319,6 +301,7 @@ sandbox_template = kubernetes.apiextensions.CustomResource(
             },
             "spec": {
                 "serviceAccountName": snapshot_ksa.metadata["name"],
+                "automountServiceAccountToken": False,
                 "runtimeClassName": "gvisor",
                 "containers": [
                     {
@@ -362,7 +345,7 @@ sandbox_template = kubernetes.apiextensions.CustomResource(
         depends_on=[
             agent_sandbox_extensions,
             snapshot_ksa,
-            pod_snapshot_policy,
+            pod_snapshot_storage_config,
         ]
     ),
 )
@@ -404,6 +387,7 @@ claude_agent_sandbox_template = kubernetes.apiextensions.CustomResource(
             },
             "spec": {
                 "serviceAccountName": snapshot_ksa.metadata["name"],
+                "automountServiceAccountToken": False,
                 "runtimeClassName": "gvisor",
                 "containers": [
                     {
@@ -441,7 +425,7 @@ claude_agent_sandbox_template = kubernetes.apiextensions.CustomResource(
         depends_on=[
             agent_sandbox_extensions,
             snapshot_ksa,
-            pod_snapshot_policy,
+            pod_snapshot_storage_config,
         ]
     ),
 )
@@ -520,7 +504,7 @@ fastapi_sandboxclaims_role = kubernetes.rbac.v1.Role(
     rules=[
         {
             "apiGroups": ["extensions.agents.x-k8s.io"],
-            "resources": ["sandboxclaims"],
+            "resources": ["sandboxclaims", "sandboxtemplates"],
             "verbs": ["create", "get", "list", "watch", "update", "patch", "delete"],
         },
         {
@@ -530,8 +514,13 @@ fastapi_sandboxclaims_role = kubernetes.rbac.v1.Role(
         },
         {
             "apiGroups": ["podsnapshot.gke.io"],
-            "resources": ["podsnapshotmanualtriggers", "podsnapshots"],
+            "resources": ["podsnapshotmanualtriggers", "podsnapshots", "podsnapshotpolicies"],
             "verbs": ["create", "get", "list", "watch", "delete"],
+        },
+        {
+            "apiGroups": [""],
+            "resources": ["pods"],
+            "verbs": ["get", "list", "patch"],
         },
     ],
     opts=pulumi.ResourceOptions(depends_on=[snapshot_ns]),
@@ -980,7 +969,6 @@ pulumi.export("snapshot_namespace", snapshot_ns.metadata["name"])
 pulumi.export("snapshot_ksa_name", snapshot_ksa.metadata["name"])
 pulumi.export("project_number", project.number)
 pulumi.export("pod_snapshot_storage_config", pod_snapshot_storage_config.metadata["name"])
-pulumi.export("pod_snapshot_policy", pod_snapshot_policy.metadata["name"])
 pulumi.export("sandbox_template", sandbox_template.metadata["name"])
 pulumi.export("sandbox_template_revision", sandbox_template_revision)
 pulumi.export("sandbox_warm_pool", sandbox_warm_pool.metadata["name"])
