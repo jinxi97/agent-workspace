@@ -1,27 +1,8 @@
 """Unit tests for the GKE cluster component."""
 
-import asyncio
-
 import pulumi
 
-# Pulumi needs a running event loop before set_mocks.
-asyncio.set_event_loop(asyncio.new_event_loop())
-
-
-class MockGcp(pulumi.runtime.Mocks):
-    """Mock GCP provider – returns inputs as outputs with a fake ID."""
-
-    def new_resource(self, args: pulumi.runtime.MockResourceArgs):
-        return [f"{args.name}-id", args.inputs]
-
-    def call(self, args: pulumi.runtime.MockCallArgs):
-        return {}
-
-
-# Set mocks BEFORE importing the component under test.
-pulumi.runtime.set_mocks(MockGcp(), preview=False)
-
-from components.cluster import create_cluster  # noqa: E402
+from components.cluster import create_cluster
 
 
 CLUSTER_ARGS = dict(
@@ -104,7 +85,7 @@ def test_system_node_pool_machine_type():
 
 @pulumi.runtime.test
 def test_system_node_pool_autoscaling():
-    """System node pool should autoscale 1–5."""
+    """System node pool should autoscale 1-5."""
     def check(v):
         assert v["min_node_count"] == 1
         assert v["max_node_count"] == 5
