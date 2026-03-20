@@ -17,7 +17,8 @@ Infrastructure-as-code for provisioning agent workspace environments on GKE, inc
 ├── tests/
 │   ├── conftest.py                    # Shared Pulumi mock setup
 │   ├── test_cluster.py                # Cluster component tests
-│   └── test_sandbox_controller.py     # Sandbox controller component tests
+│   ├── test_sandbox_controller.py     # Sandbox controller component tests
+│   └── test_workspace_api.py          # Workspace API component tests
 ├── image_source/                      # Container image build contexts
 ├── Pulumi.yaml                        # Pulumi project definition
 ├── Pulumi.dev.yaml                    # Dev stack configuration

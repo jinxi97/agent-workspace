@@ -9,6 +9,11 @@ dependencies = [
     "python-dotenv>=1.2.1",
 ]
 
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore::DeprecationWarning:pulumi_gcp",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
