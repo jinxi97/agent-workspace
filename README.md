@@ -19,7 +19,9 @@ Infrastructure-as-code for provisioning agent workspace environments on GKE, inc
 │   ├── test_cluster.py                # Cluster component tests
 │   ├── test_sandbox_controller.py     # Sandbox controller component tests
 │   ├── test_router.py                 # Router component tests
-│   └── test_workspace_api.py          # Workspace API component tests
+│   ├── test_workspace_api.py          # Workspace API component tests
+│   ├── test_python_sandbox_warmpool.py # Python sandbox warm pool tests
+│   └── test_claude_agent_warmpool.py  # Claude agent warm pool tests
 ├── image_source/                      # Container image build contexts
 ├── Pulumi.yaml                        # Pulumi project definition
 ├── Pulumi.dev.yaml                    # Dev stack configuration
