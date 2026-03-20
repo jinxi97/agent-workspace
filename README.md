@@ -2,32 +2,6 @@
 
 Infrastructure-as-code for provisioning agent workspace environments on GKE, including sandbox controllers, warm pools, and a FastAPI workspace API.
 
-## Project structure
-
-```
-├── __main__.py                        # Orchestrator — wires components together
-├── components/
-│   ├── helpers.py                     # Shared utilities (required_env, int_env)
-│   ├── cluster.py                     # GKE cluster + node pools
-│   ├── sandbox_controller.py          # Agent-sandbox CRDs, snapshot infra, GCS, IAM
-│   ├── workspace_api.py               # FastAPI deployment, ingress, certs, Cloud Build
-│   ├── router.py                      # Sandbox router deployment, service, RBAC
-│   ├── python_sandbox_warmpool.py     # Python runtime sandbox template + warm pool
-│   └── claude_agent_warmpool.py       # Claude agent sandbox template + warm pool
-├── tests/
-│   ├── conftest.py                    # Shared Pulumi mock setup
-│   ├── test_cluster.py                # Cluster component tests
-│   ├── test_sandbox_controller.py     # Sandbox controller component tests
-│   ├── test_router.py                 # Router component tests
-│   ├── test_workspace_api.py          # Workspace API component tests
-│   ├── test_python_sandbox_warmpool.py # Python sandbox warm pool tests
-│   └── test_claude_agent_warmpool.py  # Claude agent warm pool tests
-├── image_source/                      # Container image build contexts
-├── Pulumi.yaml                        # Pulumi project definition
-├── Pulumi.dev.yaml                    # Dev stack configuration
-└── cloudbuild.yaml                    # Cloud Build pipeline
-```
-
 ## What this stack creates
 
 | Component | Resources |
