@@ -63,12 +63,6 @@ def create_python_sandbox_warmpool(
                                 "initialDelaySeconds": 0,
                                 "periodSeconds": 1,
                             },
-                            "livenessProbe": {
-                                "httpGet": {"path": "/", "port": 8888},
-                                "initialDelaySeconds": 5,
-                                "periodSeconds": 5,
-                                "failureThreshold": 6,
-                            },
                             "resources": {
                                 "requests": {
                                     "cpu": "250m",
