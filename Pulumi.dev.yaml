@@ -1,2 +1,4 @@
 config:
   gcp:project: funky-485504
+  agent-workspace:gemini-api-key:
+    secure: AAABANSxC1RGdQiadUsmAzwiN44W4qmTQ9mGblJWyMfcucOutFvHRF1/b2jirpd212fLQ4VhcbfWHDWxrNA6YljmT8XfKD0=

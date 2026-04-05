@@ -1,6 +1,7 @@
 """Pulumi program for a Standard GKE cluster with Pod Snapshot enabled."""
 
 import pulumi
+import pulumi_kubernetes as kubernetes
 from dotenv import load_dotenv
 
 from components.helpers import required_env, int_env, service_external_ip
@@ -10,6 +11,7 @@ from components.workspace_api import create_workspace_api
 from components.router import create_router
 from components.python_sandbox_warmpool import create_python_sandbox_warmpool
 from components.claude_agent_warmpool import create_claude_agent_warmpool
+from components.pi_agent_warmpool import create_pi_agent_warmpool
 
 load_dotenv()
 
@@ -31,6 +33,9 @@ sandbox_template_revision = required_env("SANDBOX_TEMPLATE_REVISION")
 sandbox_warm_pool_replicas = int_env("SANDBOX_WARM_POOL_REPLICAS", 2)
 claude_agent_sandbox_template_revision = required_env("CLAUDE_AGENT_SANDBOX_TEMPLATE_REVISION")
 claude_agent_sandbox_warm_pool_replicas = int_env("CLAUDE_AGENT_SANDBOX_WARM_POOL_REPLICAS", 2)
+pi_agent_sandbox_template_revision = required_env("PI_AGENT_SANDBOX_TEMPLATE_REVISION")
+pi_agent_sandbox_warm_pool_replicas = int_env("PI_AGENT_SANDBOX_WARM_POOL_REPLICAS", 2)
+pi_agent_image_version = required_env("PI_AGENT_IMAGE_VERSION")
 sandbox_router_image = required_env("SANDBOX_ROUTER_IMAGE")
 workloads_namespace = required_env("WORKLOADS_NAMESPACE")
 fastapi_app_name = required_env("FASTAPI_APP_NAME")
@@ -105,6 +110,29 @@ claude_pool = create_claude_agent_warmpool(
     claude_agent_sandbox_warm_pool_replicas=claude_agent_sandbox_warm_pool_replicas,
 )
 
+# Gemini API key for pi-agent sandbox (consumed via secretKeyRef in the pod spec).
+pi_agent_gemini_secret = kubernetes.core.v1.Secret(
+    "pi-agent-gemini-secret",
+    metadata={
+        "name": "pi-agent-gemini-secret",
+        "namespace": controller.snapshot_ns.metadata["name"],
+    },
+    string_data={
+        "GEMINI_API_KEY": pulumi.Config().require_secret("gemini-api-key"),
+    },
+)
+
+pi_agent_pool = create_pi_agent_warmpool(
+    snapshot_ns=controller.snapshot_ns,
+    snapshot_ksa=controller.snapshot_ksa,
+    agent_sandbox_extensions=controller.agent_sandbox_extensions,
+    pod_snapshot_storage_config=controller.pod_snapshot_storage_config,
+    pi_agent_sandbox_template_revision=pi_agent_sandbox_template_revision,
+    pi_agent_sandbox_warm_pool_replicas=pi_agent_sandbox_warm_pool_replicas,
+    pi_agent_image_version=pi_agent_image_version,
+    gemini_api_key_secret_name="pi-agent-gemini-secret",
+)
+
 # ── Exports ───────────────────────────────────────────────────────────────────
 pulumi.export("project_id", project_id)
 pulumi.export("region", region)
@@ -126,3 +154,8 @@ pulumi.export("fastapi_static_ip", api.fastapi_static_ip.address)
 pulumi.export("fastapi_ingress", api.fastapi_ingress.metadata["name"])
 pulumi.export("sandbox_router_deployment", router.deployment.metadata["name"])
 pulumi.export("sandbox_router_service", router.service.metadata["name"])
+pulumi.export("pi_agent_sandbox_template", pi_agent_pool.sandbox_template.metadata["name"])
+pulumi.export("pi_agent_sandbox_template_revision", pi_agent_sandbox_template_revision)
+pulumi.export("pi_agent_sandbox_warm_pool", pi_agent_pool.sandbox_warm_pool.metadata["name"])
+pulumi.export("pi_agent_sandbox_warm_pool_replicas", pi_agent_sandbox_warm_pool_replicas)
+pulumi.export("pi_agent_image_version", pi_agent_image_version)
