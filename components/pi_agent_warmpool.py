@@ -46,6 +46,14 @@ def create_pi_agent_warmpool(
                     "serviceAccountName": snapshot_ksa.metadata["name"],
                     "automountServiceAccountToken": False,
                     "runtimeClassName": "gvisor",
+                    "volumes": [
+                        # Shared workspace: the agent reads/writes here,
+                        # syncthing watches and syncs it to the user's desktop.
+                        {"name": "workspace", "emptyDir": {}},
+                        # Ephemeral syncthing config (device ID is regenerated
+                        # on every pod spawn — users must re-pair each time).
+                        {"name": "syncthing-config", "emptyDir": {}},
+                    ],
                     "containers": [
                         {
                             "name": "pi-agent-sandbox",
@@ -64,6 +72,9 @@ def create_pi_agent_warmpool(
                                 },
                             ],
                             "ports": [{"containerPort": 3000}],
+                            "volumeMounts": [
+                                {"name": "workspace", "mountPath": "/workspace"},
+                            ],
                             "readinessProbe": {
                                 "httpGet": {"path": "/", "port": 3000},
                                 "initialDelaySeconds": 0,
@@ -81,7 +92,41 @@ def create_pi_agent_warmpool(
                                     "ephemeral-storage": "1Gi",
                                 },
                             },
-                        }
+                        },
+                        {
+                            "name": "syncthing",
+                            "image": "syncthing/syncthing:1.27",
+                            "env": [
+                                # Bind the admin UI to all interfaces so it's
+                                # reachable in-cluster via port-forward / a
+                                # per-pod Service.
+                                {"name": "STGUIADDRESS", "value": "0.0.0.0:8384"},
+                                {"name": "PUID", "value": "1000"},
+                                {"name": "PGID", "value": "1000"},
+                            ],
+                            "ports": [
+                                {"containerPort": 22000, "protocol": "TCP", "name": "sync-tcp"},
+                                {"containerPort": 22000, "protocol": "UDP", "name": "sync-quic"},
+                                {"containerPort": 21027, "protocol": "UDP", "name": "discovery"},
+                                {"containerPort": 8384, "protocol": "TCP", "name": "admin-ui"},
+                            ],
+                            "volumeMounts": [
+                                {"name": "workspace", "mountPath": "/var/syncthing/Sync/workspace"},
+                                {"name": "syncthing-config", "mountPath": "/var/syncthing/config"},
+                            ],
+                            "resources": {
+                                "requests": {
+                                    "cpu": "50m",
+                                    "memory": "128Mi",
+                                    "ephemeral-storage": "128Mi",
+                                },
+                                "limits": {
+                                    "cpu": "500m",
+                                    "memory": "512Mi",
+                                    "ephemeral-storage": "512Mi",
+                                },
+                            },
+                        },
                     ],
                     "restartPolicy": "OnFailure",
                 },
