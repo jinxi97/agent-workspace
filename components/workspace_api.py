@@ -108,6 +108,16 @@ def create_workspace_api(
                 "resources": ["pods"],
                 "verbs": ["get", "list", "patch"],
             },
+            {
+                "apiGroups": [""],
+                "resources": ["services", "endpoints"],
+                "verbs": ["create", "get", "list", "update", "patch", "delete"],
+            },
+            {
+                "apiGroups": [""],
+                "resources": ["pods/exec"],
+                "verbs": ["create", "get"],
+            },
         ],
         opts=pulumi.ResourceOptions(depends_on=[snapshot_ns]),
     )
